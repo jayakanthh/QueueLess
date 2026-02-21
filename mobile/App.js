@@ -26,6 +26,9 @@ export default function App() {
   const [orders, setOrders] = useState([])
   const [cart, setCart] = useState([])
   const [message, setMessage] = useState('')
+  const [splitEnabled, setSplitEnabled] = useState(false)
+  const [splitWith, setSplitWith] = useState('')
+  const [splitAmount, setSplitAmount] = useState('')
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL)
   const [apiInput, setApiInput] = useState(DEFAULT_API_URL)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
@@ -47,6 +50,17 @@ export default function App() {
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
     [cart],
   )
+  useEffect(() => {
+    if (!splitEnabled) return
+    if (cartTotal <= 0) {
+      setSplitAmount('')
+      return
+    }
+    const amount = Number(splitAmount)
+    if (!Number.isFinite(amount) || amount <= 0 || amount > cartTotal) {
+      setSplitAmount(String(cartTotal))
+    }
+  }, [cartTotal, splitEnabled, splitAmount])
   const activeOrders = useMemo(
     () => orders.filter((order) => order.status !== 'Completed'),
     [orders],
@@ -230,6 +244,9 @@ export default function App() {
     }
     setToken('')
     setUser(null)
+    setSplitEnabled(false)
+    setSplitWith('')
+    setSplitAmount('')
     await AsyncStorage.removeItem('ql_token')
   }
 
@@ -285,6 +302,22 @@ export default function App() {
 
   const placeOrder = async () => {
     setMessage('')
+    const trimmedSplitWith = splitWith.trim()
+    const splitAmountValue = Number(splitAmount)
+    if (splitEnabled) {
+      if (!trimmedSplitWith) {
+        setMessage('Enter who paid for the split expense.')
+        return
+      }
+      if (!Number.isFinite(splitAmountValue) || splitAmountValue <= 0) {
+        setMessage('Enter a valid split amount.')
+        return
+      }
+      if (splitAmountValue > cartTotal) {
+        setMessage('Split amount cannot exceed the total.')
+        return
+      }
+    }
     try {
       const order = await apiFetch('/api/orders', {
         method: 'POST',
@@ -292,9 +325,19 @@ export default function App() {
           items: cart.map((item) => ({ itemId: item.itemId, qty: item.qty })),
           paymentMethod: 'razorpay_simulated',
           paymentId: null,
+          ...(splitEnabled && {
+            splitExpense: {
+              enabled: true,
+              withName: trimmedSplitWith,
+              amount: splitAmountValue,
+            },
+          }),
         }),
       })
       setCart([])
+      setSplitEnabled(false)
+      setSplitWith('')
+      setSplitAmount('')
       setOrders((prev) => [order, ...prev])
       loadMenu().catch(() => {})
     } catch (error) {
@@ -625,6 +668,43 @@ export default function App() {
                     </Text>
                   </View>
                   <Pressable
+                    style={styles.rowBetween}
+                    onPress={() => {
+                      const next = !splitEnabled
+                      setSplitEnabled(next)
+                      if (!next) {
+                        setSplitWith('')
+                        setSplitAmount('')
+                      } else if (cartTotal > 0) {
+                        setSplitAmount(String(cartTotal))
+                      }
+                    }}
+                  >
+                    <Text style={styles.itemMeta}>Split expense</Text>
+                    <Text style={styles.itemMeta}>
+                      {splitEnabled ? 'On' : 'Off'}
+                    </Text>
+                  </Pressable>
+                  {splitEnabled && (
+                    <>
+                      <Text style={styles.label}>Paid by</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={splitWith}
+                        onChangeText={setSplitWith}
+                        placeholder="Friend name"
+                      />
+                      <Text style={styles.label}>Amount to pay back (₹)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={splitAmount}
+                        onChangeText={setSplitAmount}
+                        keyboardType="numeric"
+                        placeholder="0"
+                      />
+                    </>
+                  )}
+                  <Pressable
                     style={styles.primaryButton}
                     onPress={placeOrder}
                     disabled={cart.length === 0}
@@ -653,6 +733,14 @@ export default function App() {
                       ETA {order.etaMinutes} min
                     </Text>
                     <Text style={styles.itemMeta}>Status: {order.status}</Text>
+                    {!!order.splitEnabled &&
+                      order.splitWith &&
+                      order.splitAmount && (
+                        <Text style={styles.itemMeta}>
+                          Split: {order.splitWith} ·{' '}
+                          {formatCurrency(order.splitAmount)}
+                        </Text>
+                      )}
                     {!!order.pickupToken && (
                       <Text style={styles.itemMeta}>
                         Pickup token: {order.pickupToken}
@@ -677,6 +765,14 @@ export default function App() {
                     <Text style={styles.itemMeta}>
                       Total {formatCurrency(order.total)}
                     </Text>
+                    {!!order.splitEnabled &&
+                      order.splitWith &&
+                      order.splitAmount && (
+                        <Text style={styles.itemMeta}>
+                          Split: {order.splitWith} ·{' '}
+                          {formatCurrency(order.splitAmount)}
+                        </Text>
+                      )}
                   </View>
                 ))}
               </>
@@ -740,6 +836,14 @@ export default function App() {
                     <Text style={styles.itemMeta}>
                       ETA {order.etaMinutes} min
                     </Text>
+                    {!!order.splitEnabled &&
+                      order.splitWith &&
+                      order.splitAmount && (
+                        <Text style={styles.itemMeta}>
+                          Split: {order.splitWith} ·{' '}
+                          {formatCurrency(order.splitAmount)}
+                        </Text>
+                      )}
                     <View style={styles.rowWrap}>
                       {['Pending', 'Preparing', 'Ready'].map((status) => (
                         <Pressable
@@ -824,6 +928,14 @@ export default function App() {
                 <Text style={styles.itemMeta}>
                   Total {formatCurrency(order.total)}
                 </Text>
+                    {!!order.splitEnabled &&
+                      order.splitWith &&
+                      order.splitAmount && (
+                        <Text style={styles.itemMeta}>
+                          Split: {order.splitWith} ·{' '}
+                          {formatCurrency(order.splitAmount)}
+                        </Text>
+                      )}
                 <View style={styles.rowWrap}>
                   {['Pending', 'Preparing', 'Ready', 'Completed'].map(
                     (status) => (

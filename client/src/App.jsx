@@ -38,6 +38,9 @@ function App() {
   const [paymentMethod] = useState('razorpay_simulated')
   const [paymentIntent, setPaymentIntent] = useState(null)
   const [paymentStatus, setPaymentStatus] = useState('')
+  const [splitEnabled, setSplitEnabled] = useState(false)
+  const [splitWith, setSplitWith] = useState('')
+  const [splitAmount, setSplitAmount] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [scanToken, setScanToken] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
@@ -226,6 +229,17 @@ function App() {
     setPaymentIntent(null)
     setPaymentStatus('')
   }, [requiresOnlinePayment, cart, cartTotal, paymentIntent])
+  useEffect(() => {
+    if (!splitEnabled) return
+    if (cartTotal <= 0) {
+      setSplitAmount('')
+      return
+    }
+    const amount = Number(splitAmount)
+    if (!Number.isFinite(amount) || amount <= 0 || amount > cartTotal) {
+      setSplitAmount(String(cartTotal))
+    }
+  }, [cartTotal, splitEnabled, splitAmount])
 
   function resetMessage() {
     setMessage('')
@@ -289,6 +303,9 @@ function App() {
     localStorage.removeItem('ql_token')
     setUser(null)
     setCart([])
+    setSplitEnabled(false)
+    setSplitWith('')
+    setSplitAmount('')
     setShowWelcome(true)
     setShowCartPanel(false)
   }
@@ -335,6 +352,22 @@ function App() {
 
   async function placeOrder() {
     resetMessage()
+    const trimmedSplitWith = splitWith.trim()
+    const splitAmountValue = Number(splitAmount)
+    if (splitEnabled) {
+      if (!trimmedSplitWith) {
+        setMessage('Enter who paid for the split expense.')
+        return
+      }
+      if (!Number.isFinite(splitAmountValue) || splitAmountValue <= 0) {
+        setMessage('Enter a valid split amount.')
+        return
+      }
+      if (splitAmountValue > cartTotal) {
+        setMessage('Split amount cannot exceed the total.')
+        return
+      }
+    }
     try {
       const order = await apiFetch('/api/orders', {
         method: 'POST',
@@ -342,11 +375,21 @@ function App() {
           items: cart.map((item) => ({ itemId: item.itemId, qty: item.qty })),
           paymentMethod,
           paymentId: paymentIntent?.paymentId || null,
+          ...(splitEnabled && {
+            splitExpense: {
+              enabled: true,
+              withName: trimmedSplitWith,
+              amount: splitAmountValue,
+            },
+          }),
         }),
       })
       setCart([])
       setPaymentIntent(null)
       setPaymentStatus('')
+      setSplitEnabled(false)
+      setSplitWith('')
+      setSplitAmount('')
       setOrders((prev) => [order, ...prev])
       loadMenu().catch(() => {})
     } catch (error) {
@@ -656,7 +699,7 @@ function App() {
           <div className="topbar-actions">
             {showWelcome && (
               <button className="ghost theme-toggle" onClick={toggleTheme}>
-                {theme === 'dark' ? 'Light' : 'Dark'}
+                {theme === 'dark' ? '☀️' : '🌙'}
               </button>
             )}
             <div
@@ -898,21 +941,30 @@ function App() {
                               <div className="item-meta">
                                 {currency.format(item.price)}
                               </div>
-                              <div className="item-meta">
-                                Stock: {item.stock ?? 0} ·{' '}
-                                {item.available ? 'Available' : 'Unavailable'}
-                              </div>
-                              {(item.stock ?? 0) <= 5 && (
+                              {(item.stock ?? 0) === 0 ? (
+                                <div className="item-meta warning">
+                                  Out of stock
+                                </div>
+                              ) : (
+                                <div className="item-meta">
+                                  Stock: {item.stock ?? 0} ·{' '}
+                                  {item.available ? 'Available' : 'Unavailable'}
+                                </div>
+                              )}
+                              {(item.stock ?? 0) > 0 && (item.stock ?? 0) <= 5 && (
                                 <div className="item-meta warning">
                                   Low stock
                                 </div>
                               )}
                             </div>
                             <div className="actions">
-                              {qty === 0 ? (
+                              {!item.available || item.stock <= 0 ? (
+                                <div className="item-meta warning">
+                                  Out of stock
+                                </div>
+                              ) : qty === 0 ? (
                                 <button
                                   className="primary"
-                                  disabled={!item.available || item.stock <= 0}
                                   onClick={() => handleAddToCart(item)}
                                 >
                                   Add
@@ -1016,6 +1068,45 @@ function App() {
                         <label>Payment Method</label>
                         <div className="item-meta">Razorpay</div>
                       </div>
+                      <div className="form-row checkbox">
+                        <input
+                          type="checkbox"
+                          checked={splitEnabled}
+                          onChange={(event) => {
+                            const next = event.target.checked
+                            setSplitEnabled(next)
+                            if (!next) {
+                              setSplitWith('')
+                              setSplitAmount('')
+                            } else if (cartTotal > 0) {
+                              setSplitAmount(String(cartTotal))
+                            }
+                          }}
+                        />
+                        <label>Split expense</label>
+                      </div>
+                      {splitEnabled && (
+                        <>
+                          <div className="form-row">
+                            <label>Paid by</label>
+                            <input
+                              value={splitWith}
+                              onChange={(event) => setSplitWith(event.target.value)}
+                              placeholder="Friend name"
+                            />
+                          </div>
+                          <div className="form-row">
+                            <label>Amount to pay back (₹)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={cartTotal || undefined}
+                              value={splitAmount}
+                              onChange={(event) => setSplitAmount(event.target.value)}
+                            />
+                          </div>
+                        </>
+                      )}
                       {requiresOnlinePayment && (
                         <div className="payment-box">
                           <div className="payment-row">
@@ -1105,6 +1196,14 @@ function App() {
                             <div className="item-meta">
                               Payment: {order.paymentMethodLabel}
                             </div>
+                            {order.splitEnabled &&
+                              order.splitWith &&
+                              order.splitAmount && (
+                                <div className="item-meta">
+                                  Split: {order.splitWith} ·{' '}
+                                  {currency.format(order.splitAmount)}
+                                </div>
+                              )}
                             {order.pickupToken && order.paymentId && (
                                 <div className="pickup-box">
                                   <div className="item-title">Pickup QR</div>
@@ -1166,6 +1265,14 @@ function App() {
                             <div className="item-meta">
                               Payment: {order.paymentMethodLabel}
                             </div>
+                            {order.splitEnabled &&
+                              order.splitWith &&
+                              order.splitAmount && (
+                                <div className="item-meta">
+                                  Split: {order.splitWith} ·{' '}
+                                  {currency.format(order.splitAmount)}
+                                </div>
+                              )}
                           </div>
                           <div className="actions">
                             <span className="chip completed">Completed</span>
@@ -1345,6 +1452,14 @@ function App() {
                         <div className="item-meta">
                           Payment: {order.paymentMethodLabel}
                         </div>
+                        {order.splitEnabled &&
+                          order.splitWith &&
+                          order.splitAmount && (
+                            <div className="item-meta">
+                              Split: {order.splitWith} ·{' '}
+                              {currency.format(order.splitAmount)}
+                            </div>
+                          )}
                       </div>
                       <div className="actions">
                         <select
@@ -1493,6 +1608,14 @@ function App() {
                         <div className="item-meta">
                           Payment: {order.paymentMethodLabel}
                         </div>
+                        {order.splitEnabled &&
+                          order.splitWith &&
+                          order.splitAmount && (
+                            <div className="item-meta">
+                              Split: {order.splitWith} ·{' '}
+                              {currency.format(order.splitAmount)}
+                            </div>
+                          )}
                       </div>
                       <div className="actions status-actions">
                         {['Pending', 'Preparing', 'Ready'].map((status) => (
@@ -1538,6 +1661,14 @@ function App() {
                         <div className="item-meta">
                           Payment: {order.paymentMethodLabel}
                         </div>
+                        {order.splitEnabled &&
+                          order.splitWith &&
+                          order.splitAmount && (
+                            <div className="item-meta">
+                              Split: {order.splitWith} ·{' '}
+                              {currency.format(order.splitAmount)}
+                            </div>
+                          )}
                       </div>
                       <div className="actions">
                         <span className="chip completed">Completed</span>

@@ -84,7 +84,10 @@ function initDb() {
       etaMinutes INTEGER NOT NULL,
       paymentMethod TEXT NOT NULL,
       paymentMethodLabel TEXT NOT NULL,
-      paymentId TEXT
+      paymentId TEXT,
+      splitEnabled INTEGER,
+      splitWith TEXT,
+      splitAmount INTEGER
     );
     CREATE TABLE IF NOT EXISTS order_items (
       id TEXT PRIMARY KEY,
@@ -119,6 +122,15 @@ function initDb() {
   }
   if (!orderColumns.includes("pickupTokenRedeemedAt")) {
     db.exec("ALTER TABLE orders ADD COLUMN pickupTokenRedeemedAt TEXT");
+  }
+  if (!orderColumns.includes("splitEnabled")) {
+    db.exec("ALTER TABLE orders ADD COLUMN splitEnabled INTEGER");
+  }
+  if (!orderColumns.includes("splitWith")) {
+    db.exec("ALTER TABLE orders ADD COLUMN splitWith TEXT");
+  }
+  if (!orderColumns.includes("splitAmount")) {
+    db.exec("ALTER TABLE orders ADD COLUMN splitAmount INTEGER");
   }
   const userColumns = db.prepare("PRAGMA table_info(users)").all().map((col) => col.name);
   if (!userColumns.includes("rollNumber")) {
@@ -219,6 +231,9 @@ function fetchOrdersForUser(user) {
       paymentMethod: order.paymentMethod,
       paymentMethodLabel: order.paymentMethodLabel,
       paymentId: order.paymentId,
+      splitEnabled: Boolean(order.splitEnabled),
+      splitWith: order.splitWith || null,
+      splitAmount: order.splitAmount ?? null,
     };
     if (includePickupToken) {
       payload.pickupToken = order.pickupToken;
@@ -447,7 +462,7 @@ app.get("/api/orders", requireAuth, async (req, res) => {
 });
 
 app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) => {
-  const { items, paymentMethod, paymentId } = req.body || {};
+  const { items, paymentMethod, paymentId, splitExpense } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: "Cart is empty" });
   }
@@ -483,6 +498,25 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       total += menuItem.price * qty;
       etaMinutes += menuItem.prepTime * qty;
     }
+    let splitEnabled = false;
+    let splitWith = null;
+    let splitAmount = null;
+    if (splitExpense && splitExpense.enabled) {
+      const name = typeof splitExpense.withName === "string" ? splitExpense.withName.trim() : "";
+      const amount = Number(splitExpense.amount);
+      if (!name) {
+        throw new Error("Split name required");
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Invalid split amount");
+      }
+      if (amount > total) {
+        throw new Error("Split amount exceeds total");
+      }
+      splitEnabled = true;
+      splitWith = name;
+      splitAmount = Math.round(amount);
+    }
     if (selectedPayment === "razorpay_simulated") {
       if (!paymentId) {
         throw new Error("Payment required");
@@ -505,7 +539,7 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
     const pickupTokenIssuedAt = createdAt;
     const etaMinutesRounded = Math.max(5, Math.round(etaMinutes));
     const insertOrder = db.prepare(
-      "INSERT INTO orders (id, orderNumber, userId, customerName, total, status, createdAt, etaMinutes, paymentMethod, paymentMethodLabel, paymentId, pickupToken, pickupTokenIssuedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO orders (id, orderNumber, userId, customerName, total, status, createdAt, etaMinutes, paymentMethod, paymentMethodLabel, paymentId, pickupToken, pickupTokenIssuedAt, splitEnabled, splitWith, splitAmount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     insertOrder.run(
       orderId,
@@ -520,7 +554,10 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       paymentLabels[selectedPayment],
       paymentId || null,
       pickupToken,
-      pickupTokenIssuedAt
+      pickupTokenIssuedAt,
+      splitEnabled ? 1 : 0,
+      splitWith,
+      splitAmount
     );
     const insertItem = db.prepare(
       "INSERT INTO order_items (id, orderId, itemId, name, price, qty) VALUES (?, ?, ?, ?, ?, ?)"
@@ -543,6 +580,9 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       paymentId: paymentId || null,
       pickupToken,
       pickupTokenIssuedAt,
+      splitEnabled,
+      splitWith,
+      splitAmount,
     };
   });
   try {
