@@ -1,3 +1,8 @@
+import {
+  Html5QrcodeScanner,
+  Html5QrcodeSupportedFormats,
+  Html5QrcodeScanType,
+} from 'html5-qrcode'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
@@ -25,18 +30,11 @@ function App() {
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [scanToken, setScanToken] = useState('')
-  const [scanActive, setScanActive] = useState(false)
   const [scanError, setScanError] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
-  const scanFrameRef = useRef(null)
-  const scanActiveRef = useRef(false)
-  const zxingReaderRef = useRef(null)
-  const zxingControlsRef = useRef(null)
-  const fileInputRef = useRef(null)
+  const scannerRef = useRef(null)
 
   const currency = useMemo(
     () =>
@@ -149,10 +147,6 @@ function App() {
   }, [user])
 
   useEffect(() => {
-    scanActiveRef.current = scanActive
-  }, [scanActive])
-
-  useEffect(() => {
     if (!requiresOnlinePayment || cart.length === 0) {
       setPaymentIntent(null)
       setPaymentStatus('')
@@ -216,7 +210,10 @@ function App() {
     } catch (error) {
       setMessage(error.message)
     }
-    stopScanner()
+    if (scannerRef.current) {
+      scannerRef.current.clear().catch(() => {})
+      scannerRef.current = null
+    }
     setToken('')
     localStorage.removeItem('ql_token')
     setUser(null)
@@ -393,170 +390,65 @@ function App() {
     }
   }
 
-  async function redeemOrderByToken(token) {
-    resetMessage()
-    if (!token) return
-    try {
-      await apiFetch('/api/orders/redeem-by-token', {
-        method: 'POST',
-        body: JSON.stringify({ token }),
-      })
-      setScanToken('')
-      loadOrders().catch(() => {})
-    } catch (error) {
-      setMessage(error.message)
-    }
-  }
-
-  function stopScanner() {
-    if (scanFrameRef.current) {
-      cancelAnimationFrame(scanFrameRef.current)
-      scanFrameRef.current = null
-    }
-    if (zxingControlsRef.current) {
-      zxingControlsRef.current.stop()
-      zxingControlsRef.current = null
-    }
-    zxingReaderRef.current = null
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop())
-      streamRef.current = null
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-    }
-    setScanActive(false)
-  }
-
-  async function startScanner() {
-    resetMessage()
-    setScanError('')
-    stopScanner()
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setScanError('Camera access is unavailable. Use Scan from Photo.')
-        return
-      }
-      if ('BarcodeDetector' in window) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-          audio: false,
-        })
-        streamRef.current = stream
-        setScanActive(true)
-        scanActiveRef.current = true
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          await videoRef.current.play()
-        }
-        const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
-        const scanLoop = async () => {
-          if (!scanActiveRef.current || !videoRef.current) return
-          try {
-            const codes = await detector.detect(videoRef.current)
-            if (codes.length > 0) {
-              const value = codes[0].rawValue || ''
-              if (value) {
-                setScanToken(value)
-                stopScanner()
-                redeemOrderByToken(value)
-                return
-              }
-            }
-          } catch (error) {
-            setScanError(error.message)
-          }
-          scanFrameRef.current = requestAnimationFrame(scanLoop)
-        }
-        scanFrameRef.current = requestAnimationFrame(scanLoop)
-        return
-      }
-      setScanActive(true)
-      scanActiveRef.current = true
-      if (!videoRef.current) {
-        setScanError('Camera is not ready yet.')
-        return
-      }
-      const module = await import('@zxing/browser')
-      const { BrowserQRCodeReader } = module
-      if (!BrowserQRCodeReader) {
-        setScanError('QR scanner failed to load.')
-        return
-      }
-      const reader = new BrowserQRCodeReader()
-      zxingReaderRef.current = reader
-      setScanActive(true)
-      scanActiveRef.current = true
-      const controls = await reader.decodeFromVideoDevice(
-        undefined,
-        videoRef.current,
-        (result, error, controlsRef) => {
-          if (result) {
-            const value = result.getText?.() || ''
-            if (value) {
-              setScanToken(value)
-              if (controlsRef) {
-                controlsRef.stop()
-              }
-              stopScanner()
-              redeemOrderByToken(value)
-            }
-            return
-          }
-          if (error && error.name !== 'NotFoundException') {
-            setScanError(error.message)
-          }
-        },
-      )
-      zxingControlsRef.current = controls
-    } catch (error) {
-      setScanError(error.message)
-      stopScanner()
-    }
-  }
-
-  function triggerImageScan() {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-      fileInputRef.current.click()
-    }
-  }
-
-  async function handleImageFile(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    resetMessage()
-    setScanError('')
-    try {
-      const module = await import('@zxing/browser')
-      const { BrowserQRCodeReader } = module
-      if (!BrowserQRCodeReader) {
-        setScanError('QR scanner failed to load.')
-        return
-      }
-      const reader = new BrowserQRCodeReader()
-      const url = URL.createObjectURL(file)
+  const redeemOrderByToken = useCallback(
+    async (token) => {
+      resetMessage()
+      if (!token) return
       try {
-        const result = await reader.decodeFromImageUrl(url)
-        const value = result?.getText?.() || ''
-        if (!value) {
-          setScanError('No QR code found in the image.')
-          return
-        }
-        setScanToken(value)
-        redeemOrderByToken(value)
-      } finally {
-        URL.revokeObjectURL(url)
+        await apiFetch('/api/orders/redeem-by-token', {
+          method: 'POST',
+          body: JSON.stringify({ token }),
+        })
+        setScanToken('')
+        loadOrders().catch(() => {})
+      } catch (error) {
+        setMessage(error.message)
       }
-    } catch (error) {
-      setScanError(error.message || 'Unable to read QR image.')
-    }
-  }
+    },
+    [apiFetch, loadOrders],
+  )
 
   useEffect(() => {
-    if (vendorPage === 'scan') return
-    stopScanner()
-  }, [vendorPage])
+    if (vendorPage !== 'scan' || !user || user.role !== 'vendor') {
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(() => {})
+        scannerRef.current = null
+      }
+      return
+    }
+
+    setScanError('')
+    const config = {
+      fps: 10,
+      qrbox: { width: 240, height: 240 },
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      rememberLastUsedCamera: true,
+      supportedScanTypes: [
+        Html5QrcodeScanType.SCAN_TYPE_CAMERA,
+        Html5QrcodeScanType.SCAN_TYPE_FILE,
+      ],
+    }
+
+    const scanner = new Html5QrcodeScanner('qr-reader', config, false)
+    scanner.render(
+      (decodedText) => {
+        if (!decodedText) return
+        setScanToken(decodedText)
+        redeemOrderByToken(decodedText)
+      },
+      (error) => {
+        if (error) {
+          setScanError(error.toString())
+        }
+      },
+    )
+    scannerRef.current = scanner
+
+    return () => {
+      scanner.clear().catch(() => {})
+      scannerRef.current = null
+    }
+  }, [vendorPage, user, redeemOrderByToken])
 
   function updateVendorDraft(itemId, field, value) {
     setVendorDrafts((prev) => ({
@@ -1387,48 +1279,8 @@ function App() {
                 </div>
                 <div className="scan-layout">
                   <div className="scan-panel">
-                    <div className="scan-video">
-                      <video ref={videoRef} muted playsInline />
-                      {!scanActive && (
-                        <div className="empty-state">
-                          Camera is off. Start scanning to verify pickup.
-                        </div>
-                      )}
-                    </div>
-                    <div className="scan-actions">
-                      <button
-                        className="primary"
-                        onClick={startScanner}
-                        disabled={scanActive}
-                      >
-                        Start Camera
-                      </button>
-                      <button
-                        className="ghost"
-                        type="button"
-                        onClick={triggerImageScan}
-                      >
-                        Scan from Photo
-                      </button>
-                      <button
-                        className="ghost"
-                        onClick={stopScanner}
-                        disabled={!scanActive}
-                      >
-                        Stop
-                      </button>
-                      {scanError && (
-                        <div className="scan-error">{scanError}</div>
-                      )}
-                    </div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handleImageFile}
-                      style={{ display: 'none' }}
-                    />
+                    <div id="qr-reader" className="scan-reader" />
+                    {scanError && <div className="scan-error">{scanError}</div>}
                     <div className="form-row">
                       <label>Pickup Token</label>
                       <input
