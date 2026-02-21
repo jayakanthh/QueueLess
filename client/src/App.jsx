@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
@@ -24,7 +24,16 @@ function App() {
   const [paymentIntent, setPaymentIntent] = useState(null)
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
+  const [scanToken, setScanToken] = useState('')
+  const [scanActive, setScanActive] = useState(false)
+  const [scanError, setScanError] = useState('')
+  const [studentPage, setStudentPage] = useState('menu')
+  const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const scanFrameRef = useRef(null)
+  const scanActiveRef = useRef(false)
 
   const currency = useMemo(
     () =>
@@ -41,6 +50,18 @@ function App() {
     [cart],
   )
   const requiresOnlinePayment = paymentMethod === 'razorpay_simulated'
+  const activeOrders = useMemo(
+    () => orders.filter((order) => order.status !== 'Completed'),
+    [orders],
+  )
+  const pastOrders = useMemo(
+    () => orders.filter((order) => order.status === 'Completed'),
+    [orders],
+  )
+  const readyOrders = useMemo(
+    () => orders.filter((order) => order.status === 'Ready'),
+    [orders],
+  )
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -119,6 +140,16 @@ function App() {
   }, [menu])
 
   useEffect(() => {
+    if (!user) return
+    if (user.role === 'student') setStudentPage('menu')
+    if (user.role === 'vendor') setVendorPage('orders')
+  }, [user])
+
+  useEffect(() => {
+    scanActiveRef.current = scanActive
+  }, [scanActive])
+
+  useEffect(() => {
     if (!requiresOnlinePayment || cart.length === 0) {
       setPaymentIntent(null)
       setPaymentStatus('')
@@ -182,6 +213,7 @@ function App() {
     } catch (error) {
       setMessage(error.message)
     }
+    stopScanner()
     setToken('')
     localStorage.removeItem('ql_token')
     setUser(null)
@@ -357,6 +389,86 @@ function App() {
       setMessage(error.message)
     }
   }
+
+  async function redeemOrderByToken(token) {
+    resetMessage()
+    if (!token) return
+    try {
+      await apiFetch('/api/orders/redeem-by-token', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      })
+      setScanToken('')
+      loadOrders().catch(() => {})
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  function stopScanner() {
+    if (scanFrameRef.current) {
+      cancelAnimationFrame(scanFrameRef.current)
+      scanFrameRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    setScanActive(false)
+  }
+
+  async function startScanner() {
+    resetMessage()
+    setScanError('')
+    if (!('BarcodeDetector' in window)) {
+      setScanError('Barcode scanning is not supported in this browser.')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
+      setScanActive(true)
+      scanActiveRef.current = true
+      const scanLoop = async () => {
+        if (!scanActiveRef.current || !videoRef.current) return
+        try {
+          const codes = await detector.detect(videoRef.current)
+          if (codes.length > 0) {
+            const value = codes[0].rawValue || ''
+            if (value) {
+              setScanToken(value)
+              stopScanner()
+              redeemOrderByToken(value)
+              return
+            }
+          }
+        } catch (error) {
+          setScanError(error.message)
+        }
+        scanFrameRef.current = requestAnimationFrame(scanLoop)
+      }
+      scanFrameRef.current = requestAnimationFrame(scanLoop)
+    } catch (error) {
+      setScanError(error.message)
+      stopScanner()
+    }
+  }
+
+  useEffect(() => {
+    if (vendorPage === 'scan') return
+    stopScanner()
+  }, [vendorPage])
 
   function updateVendorDraft(itemId, field, value) {
     setVendorDrafts((prev) => ({
@@ -536,190 +648,287 @@ function App() {
                 <h2>Customer Portal</h2>
                 <p>Manage your canteen orders and track progress.</p>
               </div>
-            </section>
-            <section className="grid">
-              <div className="card">
-                <div className="section-header">
-                  <h2>Menu</h2>
-                  <p>Pick your items and add them to cart.</p>
-                </div>
-                <div className="list">
-                  {menu.length === 0 && (
-                    <div className="empty-state">No menu items available.</div>
-                  )}
-                  {menu.map((item) => (
-                    <div className="list-item" key={item.id}>
-                      <div className="item-details">
-                        <div className="item-title">{item.name}</div>
-                        <div className="item-meta">
-                          {item.category} · {item.prepTime} min
-                        </div>
-                        <div className="item-meta">
-                          {currency.format(item.price)}
-                        </div>
-                        <div className="item-meta">
-                          Stock: {item.stock ?? 0} ·{' '}
-                          {item.available ? 'Available' : 'Unavailable'}
-                        </div>
-                      </div>
-                      <div className="actions">
-                        <button
-                          className="primary"
-                          disabled={!item.available || item.stock <= 0}
-                          onClick={() => handleAddToCart(item)}
-                        >
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="portal-tabs">
+                <button
+                  className={`tab-button ${
+                    studentPage === 'menu' ? 'active' : ''
+                  }`}
+                  onClick={() => setStudentPage('menu')}
+                >
+                  Menu
+                </button>
+                <button
+                  className={`tab-button ${
+                    studentPage === 'orders' ? 'active' : ''
+                  }`}
+                  onClick={() => setStudentPage('orders')}
+                >
+                  Orders
+                </button>
               </div>
-
-              <div className="card">
-                <div className="section-header">
-                  <h2>Your Cart</h2>
-                  <p>Review items before placing the order.</p>
-                </div>
-                <div className="list">
-                  {cart.length === 0 && (
-                    <div className="empty-state">Cart is empty.</div>
-                  )}
-                  {cart.map((item) => (
-                    <div className="list-item" key={item.itemId}>
-                      <div className="item-details">
-                        <div className="item-title">{item.name}</div>
-                        <div className="item-meta">
-                          {currency.format(item.price)} · Qty {item.qty}
+            </section>
+            {studentPage === 'menu' && (
+              <section className="grid">
+                <div className="card">
+                  <div className="section-header">
+                    <h2>Menu</h2>
+                    <p>Pick your items and add them to cart.</p>
+                  </div>
+                  <div className="list">
+                    {menu.length === 0 && (
+                      <div className="empty-state">
+                        No menu items available.
+                      </div>
+                    )}
+                    {menu.map((item) => (
+                      <div className="list-item" key={item.id}>
+                        <div className="item-details">
+                          <div className="item-title">{item.name}</div>
+                          <div className="item-meta">
+                            {item.category} · {item.prepTime} min
+                          </div>
+                          <div className="item-meta">
+                            {currency.format(item.price)}
+                          </div>
+                          <div className="item-meta">
+                            Stock: {item.stock ?? 0} ·{' '}
+                            {item.available ? 'Available' : 'Unavailable'}
+                          </div>
+                        </div>
+                        <div className="actions">
+                          <button
+                            className="primary"
+                            disabled={!item.available || item.stock <= 0}
+                            onClick={() => handleAddToCart(item)}
+                          >
+                            Add
+                          </button>
                         </div>
                       </div>
-                      <div className="actions">
-                        <button
-                          className="ghost"
-                          onClick={() => updateCart(item.itemId, -1)}
-                        >
-                          -
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() => updateCart(item.itemId, 1)}
-                        >
-                          +
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() => removeCartItem(item.itemId)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-                <div className="cart-summary">
-                  <div className="summary-row">
-                    <span>Total</span>
-                    <span>{currency.format(cartTotal)}</span>
+
+                <div className="card">
+                  <div className="section-header">
+                    <h2>Your Cart</h2>
+                    <p>Review items before placing the order.</p>
                   </div>
-                  <div className="form-row">
-                    <label>Payment Method</label>
-                    <select
-                      value={paymentMethod}
-                      onChange={(event) => setPaymentMethod(event.target.value)}
-                    >
-                      <option value="pay_on_pickup">Pay on pickup</option>
-                      <option value="razorpay_simulated">
-                        Razorpay (simulated)
-                      </option>
-                    </select>
-                  </div>
-                  {requiresOnlinePayment && (
-                    <div className="payment-box">
-                      <div className="payment-row">
-                        <div>
-                          <div className="item-title">Razorpay Checkout</div>
+                  <div className="list">
+                    {cart.length === 0 && (
+                      <div className="empty-state">Cart is empty.</div>
+                    )}
+                    {cart.map((item) => (
+                      <div className="list-item" key={item.itemId}>
+                        <div className="item-details">
+                          <div className="item-title">{item.name}</div>
                           <div className="item-meta">
-                            Amount {currency.format(cartTotal)}
+                            {currency.format(item.price)} · Qty {item.qty}
                           </div>
-                          {paymentStatus && (
-                            <div className="item-meta">
-                              Status: {paymentStatus}
-                            </div>
-                          )}
                         </div>
                         <div className="actions">
                           <button
                             className="ghost"
-                            onClick={createPaymentOrder}
-                            disabled={cart.length === 0}
+                            onClick={() => updateCart(item.itemId, -1)}
                           >
-                            Generate
+                            -
                           </button>
                           <button
-                            className="primary"
-                            onClick={confirmPayment}
-                            disabled={!paymentIntent}
+                            className="ghost"
+                            onClick={() => updateCart(item.itemId, 1)}
                           >
-                            Pay Now
+                            +
+                          </button>
+                          <button
+                            className="ghost"
+                            onClick={() => removeCartItem(item.itemId)}
+                          >
+                            Remove
                           </button>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                  <div className="cart-summary">
+                    <div className="summary-row">
+                      <span>Total</span>
+                      <span>{currency.format(cartTotal)}</span>
                     </div>
-                  )}
-                  <button
-                    className="primary"
-                    disabled={
-                      cart.length === 0 ||
-                      (requiresOnlinePayment && paymentStatus !== 'paid')
-                    }
-                    onClick={placeOrder}
-                  >
-                    Place Order
-                  </button>
+                    <div className="form-row">
+                      <label>Payment Method</label>
+                      <select
+                        value={paymentMethod}
+                        onChange={(event) =>
+                          setPaymentMethod(event.target.value)
+                        }
+                      >
+                        <option value="pay_on_pickup">Pay on pickup</option>
+                        <option value="razorpay_simulated">
+                          Razorpay (simulated)
+                        </option>
+                      </select>
+                    </div>
+                    {requiresOnlinePayment && (
+                      <div className="payment-box">
+                        <div className="payment-row">
+                          <div>
+                            <div className="item-title">Razorpay Checkout</div>
+                            <div className="item-meta">
+                              Amount {currency.format(cartTotal)}
+                            </div>
+                            {paymentStatus && (
+                              <div className="item-meta">
+                                Status: {paymentStatus}
+                              </div>
+                            )}
+                          </div>
+                          <div className="actions">
+                            <button
+                              className="ghost"
+                              onClick={createPaymentOrder}
+                              disabled={cart.length === 0}
+                            >
+                              Generate
+                            </button>
+                            <button
+                              className="primary"
+                              onClick={confirmPayment}
+                              disabled={!paymentIntent}
+                            >
+                              Pay Now
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      className="primary"
+                      disabled={
+                        cart.length === 0 ||
+                        (requiresOnlinePayment && paymentStatus !== 'paid')
+                      }
+                      onClick={placeOrder}
+                    >
+                      Place Order
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            )}
 
-            <section className="card">
-              <div className="section-header">
-                <h2>Order Status</h2>
-                <p>Track your current and past orders.</p>
-              </div>
-              <div className="list">
-                {orders.length === 0 && (
-                  <div className="empty-state">No orders yet.</div>
-                )}
-                {orders.map((order) => (
-                  <div className="list-item" key={order.id}>
-                    <div className="item-details">
-                      <div className="item-title">
-                        Order {order.orderNumber}
-                      </div>
-                      <div className="item-meta">
-                        {order.items
-                          .map((item) => `${item.name} × ${item.qty}`)
-                          .join(', ')}
-                      </div>
-                      <div className="item-meta">
-                        ETA {order.etaMinutes} min ·{' '}
-                        {new Date(order.createdAt).toLocaleString()}
-                      </div>
-                      <div className="item-meta">
-                        Payment: {order.paymentMethodLabel}
-                      </div>
+            {studentPage === 'orders' && (
+              <section className="card">
+                <div className="section-header">
+                  <h2>Order Tracker</h2>
+                  <p>
+                    Active {activeOrders.length} · Past {pastOrders.length}
+                  </p>
+                </div>
+                <div className="orders-grid">
+                  <div className="card">
+                    <div className="section-header">
+                      <h3>Active Orders</h3>
+                      <p>Preparing, ready, or pending pickup.</p>
                     </div>
-                    <div className="actions">
-                      <span className={`chip ${order.status.toLowerCase()}`}>
-                        {order.status}
-                      </span>
-                      <span className="chip">
-                        {currency.format(order.total)}
-                      </span>
+                    <div className="list">
+                      {activeOrders.length === 0 && (
+                        <div className="empty-state">
+                          No active orders right now.
+                        </div>
+                      )}
+                      {activeOrders.map((order) => (
+                        <div className="list-item" key={order.id}>
+                          <div className="item-details">
+                            <div className="item-title">
+                              Order {order.orderNumber}
+                            </div>
+                            <div className="item-meta">
+                              {order.items
+                                .map((item) => `${item.name} × ${item.qty}`)
+                                .join(', ')}
+                            </div>
+                            <div className="item-meta">
+                              ETA {order.etaMinutes} min ·{' '}
+                              {new Date(order.createdAt).toLocaleString()}
+                            </div>
+                            <div className="item-meta">
+                              Payment: {order.paymentMethodLabel}
+                            </div>
+                            {order.pickupToken && order.paymentId && (
+                                <div className="pickup-box">
+                                  <div className="item-title">Pickup QR</div>
+                                  <div className="item-meta">
+                                    Show this at the counter to complete pickup.
+                                  </div>
+                                  <img
+                                    className="pickup-qr"
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(
+                                      order.pickupToken,
+                                    )}`}
+                                    alt="Pickup QR"
+                                  />
+                                  <div className="item-meta">
+                                    Token: {order.pickupToken}
+                                  </div>
+                                </div>
+                              )}
+                          </div>
+                          <div className="actions">
+                            <span
+                              className={`chip ${order.status.toLowerCase()}`}
+                            >
+                              {order.status}
+                            </span>
+                            <span className="chip">
+                              {currency.format(order.total)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            </section>
+                  <div className="card">
+                    <div className="section-header">
+                      <h3>Past Orders</h3>
+                      <p>Completed orders and receipts.</p>
+                    </div>
+                    <div className="list">
+                      {pastOrders.length === 0 && (
+                        <div className="empty-state">
+                          No completed orders yet.
+                        </div>
+                      )}
+                      {pastOrders.map((order) => (
+                        <div className="list-item" key={order.id}>
+                          <div className="item-details">
+                            <div className="item-title">
+                              Order {order.orderNumber}
+                            </div>
+                            <div className="item-meta">
+                              {order.items
+                                .map((item) => `${item.name} × ${item.qty}`)
+                                .join(', ')}
+                            </div>
+                            <div className="item-meta">
+                              {new Date(order.createdAt).toLocaleString()}
+                            </div>
+                            <div className="item-meta">
+                              Payment: {order.paymentMethodLabel}
+                            </div>
+                          </div>
+                          <div className="actions">
+                            <span className="chip completed">Completed</span>
+                            <span className="chip">
+                              {currency.format(order.total)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
           </>
         )}
 
@@ -904,79 +1113,110 @@ function App() {
                 <h2>Vendor Portal</h2>
                 <p>Track stock levels and keep items available.</p>
               </div>
-            </section>
-            <section className="grid">
-              <div className="card">
-                <div className="section-header">
-                  <h2>Stock Dashboard</h2>
-                  <p>Update stock levels and availability.</p>
-                </div>
-                <div className="list">
-                  {menu.length === 0 && (
-                    <div className="empty-state">No menu items available.</div>
-                  )}
-                  {menu.map((item) => {
-                    const draft = vendorDrafts[item.id] || {
-                      stock: item.stock ?? 0,
-                      available: item.available !== false,
-                    }
-                    return (
-                      <div className="list-item" key={item.id}>
-                        <div className="item-details">
-                          <div className="item-title">{item.name}</div>
-                          <div className="item-meta">
-                            {item.category} · Current stock {item.stock ?? 0}
-                          </div>
-                          {item.stock <= 5 && (
-                            <div className="item-meta warning">Low stock</div>
-                          )}
-                        </div>
-                        <div className="actions wrap">
-                          <div className="inline-field">
-                            <label>Stock</label>
-                            <input
-                              type="number"
-                              min="0"
-                              value={draft.stock}
-                              onChange={(event) =>
-                                updateVendorDraft(
-                                  item.id,
-                                  'stock',
-                                  event.target.value,
-                                )
-                              }
-                            />
-                          </div>
-                          <div className="inline-field checkbox">
-                            <input
-                              type="checkbox"
-                              id={`available-${item.id}`}
-                              checked={draft.available}
-                              onChange={(event) =>
-                                updateVendorDraft(
-                                  item.id,
-                                  'available',
-                                  event.target.checked,
-                                )
-                              }
-                            />
-                            <label htmlFor={`available-${item.id}`}>
-                              Available
-                            </label>
-                          </div>
-                          <button
-                            className="primary"
-                            onClick={() => saveVendorStock(item.id)}
-                          >
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+              <div className="portal-tabs">
+                <button
+                  className={`tab-button ${
+                    vendorPage === 'menu' ? 'active' : ''
+                  }`}
+                  onClick={() => setVendorPage('menu')}
+                >
+                  Menu
+                </button>
+                <button
+                  className={`tab-button ${
+                    vendorPage === 'orders' ? 'active' : ''
+                  }`}
+                  onClick={() => setVendorPage('orders')}
+                >
+                  Orders
+                </button>
+                <button
+                  className={`tab-button ${
+                    vendorPage === 'scan' ? 'active' : ''
+                  }`}
+                  onClick={() => setVendorPage('scan')}
+                >
+                  Scan
+                </button>
               </div>
-              <div className="card">
+            </section>
+            {vendorPage === 'menu' && (
+              <section className="grid">
+                <div className="card">
+                  <div className="section-header">
+                    <h2>Menu Editor</h2>
+                    <p>Update stock levels and availability.</p>
+                  </div>
+                  <div className="list">
+                    {menu.length === 0 && (
+                      <div className="empty-state">No menu items available.</div>
+                    )}
+                    {menu.map((item) => {
+                      const draft = vendorDrafts[item.id] || {
+                        stock: item.stock ?? 0,
+                        available: item.available !== false,
+                      }
+                      return (
+                        <div className="list-item" key={item.id}>
+                          <div className="item-details">
+                            <div className="item-title">{item.name}</div>
+                            <div className="item-meta">
+                              {item.category} · Current stock {item.stock ?? 0}
+                            </div>
+                            {item.stock <= 5 && (
+                              <div className="item-meta warning">Low stock</div>
+                            )}
+                          </div>
+                          <div className="actions wrap">
+                            <div className="inline-field">
+                              <label>Stock</label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={draft.stock}
+                                onChange={(event) =>
+                                  updateVendorDraft(
+                                    item.id,
+                                    'stock',
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="inline-field checkbox">
+                              <input
+                                type="checkbox"
+                                id={`available-${item.id}`}
+                                checked={draft.available}
+                                onChange={(event) =>
+                                  updateVendorDraft(
+                                    item.id,
+                                    'available',
+                                    event.target.checked,
+                                  )
+                                }
+                              />
+                              <label htmlFor={`available-${item.id}`}>
+                                Available
+                              </label>
+                            </div>
+                            <button
+                              className="primary"
+                              onClick={() => saveVendorStock(item.id)}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {vendorPage === 'orders' && (
+              <section className="card">
                 <div className="section-header">
                   <h2>Incoming Orders</h2>
                   <p>Move orders from preparing to ready for pickup.</p>
@@ -1011,20 +1251,107 @@ function App() {
                             updateOrderStatus(order.id, event.target.value)
                           }
                         >
-                          {['Pending', 'Preparing', 'Ready', 'Completed'].map(
-                            (status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ),
-                          )}
+                          {['Pending', 'Preparing', 'Ready'].map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
                         </select>
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            </section>
+              </section>
+            )}
+
+            {vendorPage === 'scan' && (
+              <section className="card">
+                <div className="section-header">
+                  <h2>Scan Pickup QR</h2>
+                  <p>Verify the token to complete the order.</p>
+                </div>
+                <div className="scan-layout">
+                  <div className="scan-panel">
+                    <div className="scan-video">
+                      {scanActive ? (
+                        <video ref={videoRef} muted playsInline />
+                      ) : (
+                        <div className="empty-state">
+                          Camera is off. Start scanning to verify pickup.
+                        </div>
+                      )}
+                    </div>
+                    <div className="scan-actions">
+                      <button
+                        className="primary"
+                        onClick={startScanner}
+                        disabled={scanActive}
+                      >
+                        Start Camera
+                      </button>
+                      <button
+                        className="ghost"
+                        onClick={stopScanner}
+                        disabled={!scanActive}
+                      >
+                        Stop
+                      </button>
+                      {scanError && (
+                        <div className="scan-error">{scanError}</div>
+                      )}
+                    </div>
+                    <div className="form-row">
+                      <label>Pickup Token</label>
+                      <input
+                        value={scanToken}
+                        onChange={(event) => setScanToken(event.target.value)}
+                        placeholder="Scan or paste token"
+                      />
+                    </div>
+                    <button
+                      className="primary"
+                      onClick={() => redeemOrderByToken(scanToken)}
+                      disabled={!scanToken}
+                    >
+                      Complete Order
+                    </button>
+                  </div>
+                  <div className="scan-list">
+                    <div className="section-header">
+                      <h3>Ready Orders</h3>
+                      <p>Match the pickup token with these orders.</p>
+                    </div>
+                    <div className="list">
+                      {readyOrders.length === 0 && (
+                        <div className="empty-state">
+                          No ready orders to verify.
+                        </div>
+                      )}
+                      {readyOrders.map((order) => (
+                        <div className="list-item" key={order.id}>
+                          <div className="item-details">
+                            <div className="item-title">
+                              Order {order.orderNumber} · {order.customerName}
+                            </div>
+                            <div className="item-meta">
+                              {order.items
+                                .map((item) => `${item.name} × ${item.qty}`)
+                                .join(', ')}
+                            </div>
+                            <div className="item-meta">
+                              Total {currency.format(order.total)}
+                            </div>
+                          </div>
+                          <div className="actions">
+                            <span className="chip ready">Ready</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
           </>
         )}
       </main>

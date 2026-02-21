@@ -108,6 +108,16 @@ function initDb() {
       paidAt TEXT
     );
   `);
+  const orderColumns = db.prepare("PRAGMA table_info(orders)").all().map((col) => col.name);
+  if (!orderColumns.includes("pickupToken")) {
+    db.exec("ALTER TABLE orders ADD COLUMN pickupToken TEXT");
+  }
+  if (!orderColumns.includes("pickupTokenIssuedAt")) {
+    db.exec("ALTER TABLE orders ADD COLUMN pickupTokenIssuedAt TEXT");
+  }
+  if (!orderColumns.includes("pickupTokenRedeemedAt")) {
+    db.exec("ALTER TABLE orders ADD COLUMN pickupTokenRedeemedAt TEXT");
+  }
   const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
   if (userCount === 0) {
     const insertUser = db.prepare(
@@ -179,20 +189,28 @@ function fetchOrdersForUser(user) {
       ? db.prepare("SELECT * FROM orders ORDER BY createdAt DESC").all()
       : db.prepare("SELECT * FROM orders WHERE userId = ? ORDER BY createdAt DESC").all(user.id);
   const itemsStmt = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?");
-  return orders.map((order) => ({
-    id: order.id,
-    orderNumber: order.orderNumber,
-    userId: order.userId,
-    customerName: order.customerName,
-    items: itemsStmt.all(order.id),
-    total: order.total,
-    status: order.status,
-    createdAt: order.createdAt,
-    etaMinutes: order.etaMinutes,
-    paymentMethod: order.paymentMethod,
-    paymentMethodLabel: order.paymentMethodLabel,
-    paymentId: order.paymentId,
-  }));
+  const includePickupToken = user.role === "student";
+  return orders.map((order) => {
+    const payload = {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      userId: order.userId,
+      customerName: order.customerName,
+      items: itemsStmt.all(order.id),
+      total: order.total,
+      status: order.status,
+      createdAt: order.createdAt,
+      etaMinutes: order.etaMinutes,
+      paymentMethod: order.paymentMethod,
+      paymentMethodLabel: order.paymentMethodLabel,
+      paymentId: order.paymentId,
+    };
+    if (includePickupToken) {
+      payload.pickupToken = order.pickupToken;
+      payload.pickupTokenIssuedAt = order.pickupTokenIssuedAt;
+    }
+    return payload;
+  });
 }
 
 app.get("/api/health", (_req, res) => {
@@ -443,9 +461,11 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
     const orderId = createToken();
     const orderNumber = String(orderCount + 1).padStart(4, "0");
     const createdAt = new Date().toISOString();
+    const pickupToken = createToken();
+    const pickupTokenIssuedAt = createdAt;
     const etaMinutesRounded = Math.max(5, Math.round(etaMinutes));
     const insertOrder = db.prepare(
-      "INSERT INTO orders (id, orderNumber, userId, customerName, total, status, createdAt, etaMinutes, paymentMethod, paymentMethodLabel, paymentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO orders (id, orderNumber, userId, customerName, total, status, createdAt, etaMinutes, paymentMethod, paymentMethodLabel, paymentId, pickupToken, pickupTokenIssuedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     insertOrder.run(
       orderId,
@@ -458,7 +478,9 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       etaMinutesRounded,
       selectedPayment,
       paymentLabels[selectedPayment],
-      paymentId || null
+      paymentId || null,
+      pickupToken,
+      pickupTokenIssuedAt
     );
     const insertItem = db.prepare(
       "INSERT INTO order_items (id, orderId, itemId, name, price, qty) VALUES (?, ?, ?, ?, ?, ?)"
@@ -479,6 +501,8 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       paymentMethod: selectedPayment,
       paymentMethodLabel: paymentLabels[selectedPayment],
       paymentId: paymentId || null,
+      pickupToken,
+      pickupTokenIssuedAt,
     };
   });
   try {
@@ -496,6 +520,9 @@ app.patch("/api/orders/:id/status", requireAuth, requireRole("admin", "vendor"),
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: "Invalid status" });
   }
+  if (req.user.role === "vendor" && status === "Completed") {
+    return res.status(403).json({ message: "Use pickup verification to complete orders" });
+  }
   const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ message: "Not found" });
   db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
@@ -505,6 +532,54 @@ app.patch("/api/orders/:id/status", requireAuth, requireRole("admin", "vendor"),
     ...updated,
     items,
   });
+});
+
+app.post("/api/orders/:id/redeem", requireAuth, requireRole("vendor"), async (req, res) => {
+  const { id } = req.params;
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ message: "Missing token" });
+  }
+  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  if (!order) return res.status(404).json({ message: "Not found" });
+  if (order.status !== "Ready") {
+    return res.status(400).json({ message: "Order not ready for pickup" });
+  }
+  if (!order.pickupToken || order.pickupToken !== token) {
+    return res.status(400).json({ message: "Invalid pickup token" });
+  }
+  const redeemedAt = new Date().toISOString();
+  db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
+    "Completed",
+    redeemedAt,
+    id
+  );
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(id);
+  res.json({ ...updated, items });
+});
+
+app.post("/api/orders/redeem-by-token", requireAuth, requireRole("vendor"), async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ message: "Missing token" });
+  }
+  const order = db.prepare("SELECT * FROM orders WHERE pickupToken = ?").get(token);
+  if (!order) return res.status(404).json({ message: "Invalid pickup token" });
+  if (order.status !== "Ready") {
+    return res.status(400).json({ message: "Order not ready for pickup" });
+  }
+  const redeemedAt = new Date().toISOString();
+  db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
+    "Completed",
+    redeemedAt,
+    order.id
+  );
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
+  const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(
+    order.id
+  );
+  res.json({ ...updated, items });
 });
 
 initDb();
