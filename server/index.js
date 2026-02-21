@@ -542,6 +542,9 @@ app.post("/api/orders/:id/redeem", requireAuth, requireRole("vendor"), async (re
   }
   const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ message: "Not found" });
+  if (order.status === "Completed") {
+    return res.status(409).json({ message: "Order already picked up" });
+  }
   if (order.status !== "Ready") {
     return res.status(400).json({ message: "Order not ready for pickup" });
   }
@@ -566,6 +569,9 @@ app.post("/api/orders/redeem-by-token", requireAuth, requireRole("vendor"), asyn
   }
   const order = db.prepare("SELECT * FROM orders WHERE pickupToken = ?").get(token);
   if (!order) return res.status(404).json({ message: "Invalid pickup token" });
+  if (order.status === "Completed") {
+    return res.status(409).json({ message: "Order already picked up" });
+  }
   if (order.status !== "Ready") {
     return res.status(400).json({ message: "Order not ready for pickup" });
   }
