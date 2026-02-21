@@ -993,12 +993,6 @@ function App() {
 
         {user.role === 'admin' && (
           <>
-            <section className="card portal-header">
-              <div className="section-header">
-                <h2>Admin Portal</h2>
-                <p>Oversee menu, orders, and service flow.</p>
-              </div>
-            </section>
             <section className="grid">
               <div className="card">
                 <div className="section-header">

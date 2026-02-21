@@ -20,9 +20,20 @@
   justify-content: space-between;
   align-items: center;
   padding: 22px 32px;
-  background: rgba(255, 255, 255, 0.8);
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.85);
   border-bottom: 1px solid rgba(148, 163, 184, 0.2);
   backdrop-filter: blur(10px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .brand-name {
@@ -43,6 +54,15 @@
   gap: 12px;
   font-size: 14px;
   color: #475569;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.user-area span {
+  font-weight: 600;
+  color: #1f2937;
 }
 
 .topbar-nav {
@@ -50,6 +70,10 @@
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .content {
