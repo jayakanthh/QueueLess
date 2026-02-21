@@ -603,7 +603,7 @@ function App() {
               </div>
             </section>
           ) : (
-            <section className="card">
+            <section className="card auth-card">
               {authTab === 'login' ? (
                 <form className="form" onSubmit={handleLogin}>
                   <div className="form-row">
