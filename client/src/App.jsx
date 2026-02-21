@@ -538,71 +538,72 @@ function App() {
             <span className="brand-name">QueueLess</span>
             <span className="brand-subtitle">Digital Canteen Ordering</span>
           </div>
+          <div className="topbar-nav">
+            <button
+              className={`tab-button ${authTab === 'login' ? 'active' : ''}`}
+              onClick={() => {
+                setAuthTab('login')
+                setShowWelcome(false)
+              }}
+            >
+              Login
+            </button>
+            <button
+              className={`tab-button ${authTab === 'register' ? 'active' : ''}`}
+              onClick={() => {
+                setAuthTab('register')
+                setShowWelcome(false)
+              }}
+            >
+              Register
+            </button>
+          </div>
         </header>
 
         <main className="content">
           {showWelcome ? (
             <section className="card welcome">
-              <div className="section-header">
-                <h2>Welcome to QueueLess</h2>
-                <p>Order ahead, skip the line, and keep the canteen moving.</p>
-              </div>
-              <div className="hero">
-                <div>
-                  <h3>How it works</h3>
-                  <ul className="hero-list">
-                    <li>Browse the live canteen menu with stock visibility.</li>
-                    <li>Place your order and track status in real time.</li>
-                    <li>Vendors update stock while admins manage menu + orders.</li>
-                  </ul>
+              <div className="welcome-hero">
+                <div className="welcome-copy">
+                  <span className="welcome-pill">Smart Canteen</span>
+                  <h2>Skip the line with QueueLess</h2>
+                  <p>
+                    Order in seconds, track preparation, and collect your meal
+                    right on time with a smoother campus experience.
+                  </p>
                 </div>
-                <div className="hero-actions">
-                  <button
-                    className="primary"
-                    onClick={() => {
-                      setAuthTab('login')
-                      setShowWelcome(false)
-                    }}
-                  >
-                    Continue to Login
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() => {
-                      setAuthTab('register')
-                      setShowWelcome(false)
-                    }}
-                  >
-                    Create Account
-                  </button>
+                <div className="welcome-panel">
+                  <div className="welcome-stat">
+                    <span>Live Menu</span>
+                    <strong>Stock-aware</strong>
+                  </div>
+                  <div className="welcome-stat">
+                    <span>Order Tracking</span>
+                    <strong>Real-time ETA</strong>
+                  </div>
+                  <div className="welcome-stat">
+                    <span>Pickup Ready</span>
+                    <strong>QR Verified</strong>
+                  </div>
                 </div>
               </div>
-              <div className="hint">
-                <div className="hint-title">Demo logins</div>
-                <div className="hint-body">
-                  <div>Admin: admin@canteen.com / admin123</div>
-                  <div>Vendor: vendor@canteen.com / vendor123</div>
-                  <div>Student: student@canteen.com / student123</div>
+              <div className="welcome-grid">
+                <div className="welcome-card">
+                  <h3>Browse & build</h3>
+                  <p>Pick items fast with live availability and prep times.</p>
+                </div>
+                <div className="welcome-card">
+                  <h3>Track in real time</h3>
+                  <p>Stay updated from pending to ready-for-pickup.</p>
+                </div>
+                <div className="welcome-card">
+                  <h3>Pick up confidently</h3>
+                  <p>Scan the QR token for quick, secure handoff.</p>
                 </div>
               </div>
             </section>
           ) : (
             <section className="card">
-              <div className="tabs">
-                <button
-                  className={`tab ${authTab === 'login' ? 'active' : ''}`}
-                  onClick={() => setAuthTab('login')}
-                >
-                  Login
-                </button>
-                <button
-                  className={`tab ${authTab === 'register' ? 'active' : ''}`}
-                  onClick={() => setAuthTab('register')}
-                >
-                  Register
-                </button>
-              </div>
-
               {authTab === 'login' ? (
                 <form className="form" onSubmit={handleLogin}>
                   <div className="form-row">
@@ -638,14 +639,6 @@ function App() {
               )}
 
               {message && <div className="message">{message}</div>}
-              <div className="hint">
-                <div className="hint-title">Demo logins</div>
-                <div className="hint-body">
-                  <div>Admin: admin@canteen.com / admin123</div>
-                  <div>Vendor: vendor@canteen.com / vendor123</div>
-                  <div>Student: student@canteen.com / student123</div>
-                </div>
-              </div>
             </section>
           )}
         </main>
@@ -661,6 +654,50 @@ function App() {
           <span className="brand-name">QueueLess</span>
           <span className="brand-subtitle">Digital Canteen Ordering</span>
         </div>
+        {user.role === 'student' && (
+          <div className="topbar-nav">
+            <button
+              className={`tab-button ${
+                studentPage === 'menu' ? 'active' : ''
+              }`}
+              onClick={() => setStudentPage('menu')}
+            >
+              Menu
+            </button>
+            <button
+              className={`tab-button ${
+                studentPage === 'orders' ? 'active' : ''
+              }`}
+              onClick={() => setStudentPage('orders')}
+            >
+              Orders
+            </button>
+          </div>
+        )}
+        {user.role === 'vendor' && (
+          <div className="topbar-nav">
+            <button
+              className={`tab-button ${vendorPage === 'menu' ? 'active' : ''}`}
+              onClick={() => setVendorPage('menu')}
+            >
+              Menu
+            </button>
+            <button
+              className={`tab-button ${
+                vendorPage === 'orders' ? 'active' : ''
+              }`}
+              onClick={() => setVendorPage('orders')}
+            >
+              Orders
+            </button>
+            <button
+              className={`tab-button ${vendorPage === 'scan' ? 'active' : ''}`}
+              onClick={() => setVendorPage('scan')}
+            >
+              Scan
+            </button>
+          </div>
+        )}
         <div className="user-area">
           <span>
             {user.name} ({user.role})
@@ -676,30 +713,6 @@ function App() {
 
         {user.role === 'student' && (
           <>
-            <section className="card portal-header">
-              <div className="section-header">
-                <h2>Customer Portal</h2>
-                <p>Manage your canteen orders and track progress.</p>
-              </div>
-              <div className="portal-tabs">
-                <button
-                  className={`tab-button ${
-                    studentPage === 'menu' ? 'active' : ''
-                  }`}
-                  onClick={() => setStudentPage('menu')}
-                >
-                  Menu
-                </button>
-                <button
-                  className={`tab-button ${
-                    studentPage === 'orders' ? 'active' : ''
-                  }`}
-                  onClick={() => setStudentPage('orders')}
-                >
-                  Orders
-                </button>
-              </div>
-            </section>
             {studentPage === 'menu' && (
               <section className="grid">
                 <div className="card">
@@ -1131,38 +1144,6 @@ function App() {
 
         {user.role === 'vendor' && (
           <>
-            <section className="card portal-header">
-              <div className="section-header">
-                <h2>Vendor Portal</h2>
-                <p>Track stock levels and keep items available.</p>
-              </div>
-              <div className="portal-tabs">
-                <button
-                  className={`tab-button ${
-                    vendorPage === 'menu' ? 'active' : ''
-                  }`}
-                  onClick={() => setVendorPage('menu')}
-                >
-                  Menu
-                </button>
-                <button
-                  className={`tab-button ${
-                    vendorPage === 'orders' ? 'active' : ''
-                  }`}
-                  onClick={() => setVendorPage('orders')}
-                >
-                  Orders
-                </button>
-                <button
-                  className={`tab-button ${
-                    vendorPage === 'scan' ? 'active' : ''
-                  }`}
-                  onClick={() => setVendorPage('scan')}
-                >
-                  Scan
-                </button>
-              </div>
-            </section>
             {vendorPage === 'menu' && (
               <section className="grid">
                 <div className="card">

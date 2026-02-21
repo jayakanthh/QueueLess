@@ -213,6 +213,26 @@ function fetchOrdersForUser(user) {
   });
 }
 
+function deductStockForOrder(orderId) {
+  const items = db.prepare("SELECT itemId, qty FROM order_items WHERE orderId = ?").all(orderId);
+  const menuStmt = db.prepare("SELECT stock FROM menu WHERE id = ?");
+  const updateStockStmt = db.prepare("UPDATE menu SET stock = ? WHERE id = ?");
+  items.forEach((item) => {
+    const menuItem = menuStmt.get(item.itemId);
+    const qty = Number(item.qty);
+    if (!menuItem || !Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Invalid item in order");
+    }
+    if (menuItem.stock < qty) {
+      throw new Error("Insufficient stock to complete pickup");
+    }
+  });
+  items.forEach((item) => {
+    const menuItem = menuStmt.get(item.itemId);
+    updateStockStmt.run(menuItem.stock - Number(item.qty), item.itemId);
+  });
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -418,7 +438,6 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
   }
   const placeOrder = db.transaction(() => {
     const menuStmt = db.prepare("SELECT * FROM menu WHERE id = ?");
-    const updateStockStmt = db.prepare("UPDATE menu SET stock = ? WHERE id = ?");
     const orderCount = db.prepare("SELECT COUNT(*) as count FROM orders").get().count;
     const orderItems = [];
     let total = 0;
@@ -432,8 +451,6 @@ app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) =>
       if (!menuItem.available || menuItem.stock < qty) {
         throw new Error(`Insufficient stock for ${menuItem.name}`);
       }
-      const updatedStock = menuItem.stock - qty;
-      updateStockStmt.run(updatedStock, menuItem.id);
       orderItems.push({
         itemId: menuItem.id,
         name: menuItem.name,
@@ -523,9 +540,26 @@ app.patch("/api/orders/:id/status", requireAuth, requireRole("admin", "vendor"),
   if (req.user.role === "vendor" && status === "Completed") {
     return res.status(403).json({ message: "Use pickup verification to complete orders" });
   }
-  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
+  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ message: "Not found" });
-  db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
+  if (status === "Completed" && order.status !== "Completed") {
+    const completeOrder = db.transaction(() => {
+      deductStockForOrder(order.id);
+      const redeemedAt = new Date().toISOString();
+      db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
+        "Completed",
+        redeemedAt,
+        order.id
+      );
+    });
+    try {
+      completeOrder();
+    } catch (error) {
+      return res.status(400).json({ message: error.message });
+    }
+  } else {
+    db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
+  }
   const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(id);
   res.json({
@@ -540,26 +574,38 @@ app.post("/api/orders/:id/redeem", requireAuth, requireRole("vendor"), async (re
   if (!token) {
     return res.status(400).json({ message: "Missing token" });
   }
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-  if (!order) return res.status(404).json({ message: "Not found" });
-  if (order.status === "Completed") {
-    return res.status(409).json({ message: "Order already picked up" });
+  const completeOrder = db.transaction(() => {
+    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    if (!order) throw new Error("Not found");
+    if (order.status === "Completed") {
+      throw new Error("Order already picked up");
+    }
+    if (order.status !== "Ready") {
+      throw new Error("Order not ready for pickup");
+    }
+    if (!order.pickupToken || order.pickupToken !== token) {
+      throw new Error("Invalid pickup token");
+    }
+    deductStockForOrder(order.id);
+    const redeemedAt = new Date().toISOString();
+    db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
+      "Completed",
+      redeemedAt,
+      order.id
+    );
+    const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
+    const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(
+      order.id
+    );
+    return { ...updated, items };
+  });
+  try {
+    const updated = completeOrder();
+    res.json(updated);
+  } catch (error) {
+    const message = error.message === "Not found" ? "Not found" : error.message;
+    res.status(message === "Not found" ? 404 : 400).json({ message });
   }
-  if (order.status !== "Ready") {
-    return res.status(400).json({ message: "Order not ready for pickup" });
-  }
-  if (!order.pickupToken || order.pickupToken !== token) {
-    return res.status(400).json({ message: "Invalid pickup token" });
-  }
-  const redeemedAt = new Date().toISOString();
-  db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
-    "Completed",
-    redeemedAt,
-    id
-  );
-  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-  const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(id);
-  res.json({ ...updated, items });
 });
 
 app.post("/api/orders/redeem-by-token", requireAuth, requireRole("vendor"), async (req, res) => {
@@ -567,25 +613,34 @@ app.post("/api/orders/redeem-by-token", requireAuth, requireRole("vendor"), asyn
   if (!token) {
     return res.status(400).json({ message: "Missing token" });
   }
-  const order = db.prepare("SELECT * FROM orders WHERE pickupToken = ?").get(token);
-  if (!order) return res.status(404).json({ message: "Invalid pickup token" });
-  if (order.status === "Completed") {
-    return res.status(409).json({ message: "Order already picked up" });
+  const completeOrder = db.transaction(() => {
+    const order = db.prepare("SELECT * FROM orders WHERE pickupToken = ?").get(token);
+    if (!order) throw new Error("Invalid pickup token");
+    if (order.status === "Completed") {
+      throw new Error("Order already picked up");
+    }
+    if (order.status !== "Ready") {
+      throw new Error("Order not ready for pickup");
+    }
+    deductStockForOrder(order.id);
+    const redeemedAt = new Date().toISOString();
+    db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
+      "Completed",
+      redeemedAt,
+      order.id
+    );
+    const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
+    const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(
+      order.id
+    );
+    return { ...updated, items };
+  });
+  try {
+    const updated = completeOrder();
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
-  if (order.status !== "Ready") {
-    return res.status(400).json({ message: "Order not ready for pickup" });
-  }
-  const redeemedAt = new Date().toISOString();
-  db.prepare("UPDATE orders SET status = ?, pickupTokenRedeemedAt = ? WHERE id = ?").run(
-    "Completed",
-    redeemedAt,
-    order.id
-  );
-  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(order.id);
-  const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(
-    order.id
-  );
-  res.json({ ...updated, items });
 });
 
 initDb();
