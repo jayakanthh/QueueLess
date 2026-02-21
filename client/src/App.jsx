@@ -785,7 +785,7 @@ function App() {
         )}
         <div className="user-area">
           <span>
-            {user.name} ({user.role})
+            {user.role === 'student' ? user.name : `${user.name} (${user.role})`}
           </span>
           {user.role === 'student' && (
             <button
