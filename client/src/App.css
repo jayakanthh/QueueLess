@@ -94,30 +94,31 @@
   position: relative;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(92px, 1fr);
+  grid-auto-columns: minmax(140px, 1fr);
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 10px 12px;
   border-radius: 999px;
-  background: rgba(248, 250, 252, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
   box-shadow:
-    0 10px 20px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 8px 18px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .topbar-nav::before {
   content: '';
   position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 6px;
-  width: calc((100% - 12px) / var(--nav-count, 1));
+  top: 5px;
+  bottom: 5px;
+  left: 5px;
+  width: calc((100% - 10px) / var(--nav-count, 1));
   border-radius: 999px;
   background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.9);
   box-shadow:
-    0 6px 14px rgba(15, 23, 42, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 6px 14px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   transform: translateX(calc(var(--active-index, 0) * 100%));
   transition: transform 0.35s ease, background 0.35s ease, box-shadow 0.35s ease;
 }
@@ -638,12 +639,12 @@
 }
 
 .tab-button {
-  padding: 8px 16px;
+  padding: 10px 24px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: transparent;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   color: #475569;
   font-weight: 600;
   letter-spacing: 0.01em;
