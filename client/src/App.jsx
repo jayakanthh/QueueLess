@@ -36,6 +36,7 @@ function App() {
   const scanActiveRef = useRef(false)
   const zxingReaderRef = useRef(null)
   const zxingControlsRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   const currency = useMemo(
     () =>
@@ -432,6 +433,10 @@ function App() {
     setScanError('')
     stopScanner()
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setScanError('Camera access is unavailable. Use Scan from Photo.')
+        return
+      }
       if ('BarcodeDetector' in window) {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment' },
@@ -507,6 +512,44 @@ function App() {
     } catch (error) {
       setScanError(error.message)
       stopScanner()
+    }
+  }
+
+  function triggerImageScan() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
+  async function handleImageFile(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    resetMessage()
+    setScanError('')
+    try {
+      const module = await import('@zxing/browser')
+      const { BrowserQRCodeReader } = module
+      if (!BrowserQRCodeReader) {
+        setScanError('QR scanner failed to load.')
+        return
+      }
+      const reader = new BrowserQRCodeReader()
+      const url = URL.createObjectURL(file)
+      try {
+        const result = await reader.decodeFromImageUrl(url)
+        const value = result?.getText?.() || ''
+        if (!value) {
+          setScanError('No QR code found in the image.')
+          return
+        }
+        setScanToken(value)
+        redeemOrderByToken(value)
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+    } catch (error) {
+      setScanError(error.message || 'Unable to read QR image.')
     }
   }
 
@@ -1362,6 +1405,13 @@ function App() {
                       </button>
                       <button
                         className="ghost"
+                        type="button"
+                        onClick={triggerImageScan}
+                      >
+                        Scan from Photo
+                      </button>
+                      <button
+                        className="ghost"
                         onClick={stopScanner}
                         disabled={!scanActive}
                       >
@@ -1371,6 +1421,14 @@ function App() {
                         <div className="scan-error">{scanError}</div>
                       )}
                     </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleImageFile}
+                      style={{ display: 'none' }}
+                    />
                     <div className="form-row">
                       <label>Pickup Token</label>
                       <input
