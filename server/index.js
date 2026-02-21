@@ -35,6 +35,7 @@ const defaultData = {
       email: "student@canteen.com",
       password: "student123",
       role: "student",
+      rollNumber: "STU-1001",
     },
   ],
   menu: [
@@ -60,7 +61,8 @@ function initDb() {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
-      role TEXT NOT NULL
+      role TEXT NOT NULL,
+      rollNumber TEXT
     );
     CREATE TABLE IF NOT EXISTS menu (
       id TEXT PRIMARY KEY,
@@ -118,17 +120,28 @@ function initDb() {
   if (!orderColumns.includes("pickupTokenRedeemedAt")) {
     db.exec("ALTER TABLE orders ADD COLUMN pickupTokenRedeemedAt TEXT");
   }
+  const userColumns = db.prepare("PRAGMA table_info(users)").all().map((col) => col.name);
+  if (!userColumns.includes("rollNumber")) {
+    db.exec("ALTER TABLE users ADD COLUMN rollNumber TEXT");
+  }
   const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
   if (userCount === 0) {
     const insertUser = db.prepare(
-      "INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO users (id, name, email, password, role, rollNumber) VALUES (?, ?, ?, ?, ?, ?)"
     );
     const insertMenu = db.prepare(
       "INSERT INTO menu (id, name, category, price, prepTime, stock, available) VALUES (?, ?, ?, ?, ?, ?, ?)"
     );
     const seed = db.transaction(() => {
       defaultData.users.forEach((user) => {
-        insertUser.run(user.id, user.name, user.email, user.password, user.role);
+        insertUser.run(
+          user.id,
+          user.name,
+          user.email,
+          user.password,
+          user.role,
+          user.rollNumber || null
+        );
       });
       defaultData.menu.forEach((item) => {
         insertMenu.run(
@@ -163,7 +176,9 @@ async function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ message: "Unauthorized" });
   const session = db.prepare("SELECT token, userId FROM sessions WHERE token = ?").get(token);
   if (!session) return res.status(401).json({ message: "Unauthorized" });
-  const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(session.userId);
+  const user = db
+    .prepare("SELECT id, name, email, role, rollNumber FROM users WHERE id = ?")
+    .get(session.userId);
   if (!user) return res.status(401).json({ message: "Unauthorized" });
   req.user = user;
   req.token = token;
@@ -238,8 +253,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const { name, email, password } = req.body || {};
-  if (!name || !email || !password) {
+  const { name, email, password, rollNumber } = req.body || {};
+  if (!name || !email || !password || !rollNumber) {
     return res.status(400).json({ message: "Missing fields" });
   }
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
@@ -248,19 +263,18 @@ app.post("/api/auth/register", async (req, res) => {
   }
   const token = createToken();
   const userId = createToken();
-  db.prepare("INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)").run(
-    userId,
-    name,
-    email,
-    password,
-    "student"
-  );
+  db.prepare(
+    "INSERT INTO users (id, name, email, password, role, rollNumber) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(userId, name, email, password, "student", rollNumber);
   db.prepare("INSERT INTO sessions (token, userId, createdAt) VALUES (?, ?, ?)").run(
     token,
     userId,
     new Date().toISOString()
   );
-  res.json({ token, user: { id: userId, name, email, role: "student" } });
+  res.json({
+    token,
+    user: { id: userId, name, email, role: "student", rollNumber },
+  });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -269,7 +283,7 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(400).json({ message: "Missing fields" });
   }
   const user = db
-    .prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?")
+    .prepare("SELECT id, name, email, role, rollNumber FROM users WHERE email = ? AND password = ?")
     .get(email, password);
   if (!user) return res.status(401).json({ message: "Invalid credentials" });
   const token = createToken();
@@ -278,7 +292,16 @@ app.post("/api/auth/login", async (req, res) => {
     user.id,
     new Date().toISOString()
   );
-  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      rollNumber: user.rollNumber,
+    },
+  });
 });
 
 app.post("/api/auth/logout", requireAuth, async (req, res) => {
@@ -287,8 +310,8 @@ app.post("/api/auth/logout", requireAuth, async (req, res) => {
 });
 
 app.get("/api/me", requireAuth, (req, res) => {
-  const { id, name, email, role } = req.user;
-  res.json({ id, name, email, role });
+  const { id, name, email, role, rollNumber } = req.user;
+  res.json({ id, name, email, role, rollNumber });
 });
 
 app.get("/api/menu", async (_req, res) => {

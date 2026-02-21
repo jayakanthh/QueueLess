@@ -27,6 +27,14 @@ function App() {
     stock: '',
     available: true,
   })
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light'
+    const stored = localStorage.getItem('ql_theme')
+    if (stored === 'light' || stored === 'dark') return stored
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light'
+  })
   const [paymentMethod] = useState('razorpay_simulated')
   const [paymentIntent, setPaymentIntent] = useState(null)
   const [paymentStatus, setPaymentStatus] = useState('')
@@ -34,6 +42,7 @@ function App() {
   const [scanToken, setScanToken] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
+  const [menuCategory, setMenuCategory] = useState('All')
   const [showWelcome, setShowWelcome] = useState(!token)
   const [showCartPanel, setShowCartPanel] = useState(false)
   const scannerRef = useRef(null)
@@ -84,6 +93,16 @@ function App() {
     })
     return grouped
   }, [menu])
+  const menuCategories = useMemo(() => {
+    const categories = Array.from(menuByCategory.keys()).sort((a, b) =>
+      a.localeCompare(b),
+    )
+    return ['All', ...categories]
+  }, [menuByCategory])
+  const filteredMenu = useMemo(() => {
+    if (menuCategory === 'All') return menu
+    return menu.filter((item) => (item.category || 'Other') === menuCategory)
+  }, [menu, menuCategory])
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -134,6 +153,11 @@ function App() {
     if (!token) return
     loadMe()
   }, [token, loadMe])
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('ql_theme', theme)
+  }, [theme])
 
   useEffect(() => {
     if (!user) return
@@ -183,6 +207,14 @@ function App() {
   useEffect(() => {
     if (studentPage !== 'menu') setShowCartPanel(false)
   }, [studentPage])
+  useEffect(() => {
+    if (!menuCategories.includes(menuCategory)) {
+      setMenuCategory('All')
+    }
+  }, [menuCategories, menuCategory])
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }
 
   useEffect(() => {
     if (!requiresOnlinePayment || cart.length === 0) {
@@ -621,28 +653,35 @@ function App() {
           >
             <img className="brand-logo" src="/qless.png" alt="QueueLess logo" />
           </button>
-          <div
-            className="topbar-nav"
-            style={{ '--nav-count': 2, '--active-index': authNavIndex }}
-          >
-            <button
-              className={`tab-button ${authTab === 'login' ? 'active' : ''}`}
-              onClick={() => {
-                setAuthTab('login')
-                setShowWelcome(false)
-              }}
+          <div className="topbar-actions">
+            {showWelcome && (
+              <button className="ghost theme-toggle" onClick={toggleTheme}>
+                {theme === 'dark' ? 'Light' : 'Dark'}
+              </button>
+            )}
+            <div
+              className="topbar-nav"
+              style={{ '--nav-count': 2, '--active-index': authNavIndex }}
             >
-              Login
-            </button>
-            <button
-              className={`tab-button danger ${authTab === 'register' ? 'active' : ''}`}
-              onClick={() => {
-                setAuthTab('register')
-                setShowWelcome(false)
-              }}
-            >
-              Register
-            </button>
+              <button
+                className={`tab-button ${authTab === 'login' ? 'active' : ''}`}
+                onClick={() => {
+                  setAuthTab('login')
+                  setShowWelcome(false)
+                }}
+              >
+                Login
+              </button>
+              <button
+                className={`tab-button danger ${authTab === 'register' ? 'active' : ''}`}
+                onClick={() => {
+                  setAuthTab('register')
+                  setShowWelcome(false)
+                }}
+              >
+                Register
+              </button>
+            </div>
           </div>
         </header>
 
@@ -823,6 +862,19 @@ function App() {
                     <h2>Menu</h2>
                     <p>Pick your items and add them to cart.</p>
                   </div>
+                  <div className="category-tabs">
+                    {menuCategories.map((category) => (
+                      <button
+                        key={category}
+                        className={`category-tab ${
+                          menuCategory === category ? 'active' : ''
+                        }`}
+                        onClick={() => setMenuCategory(category)}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
                   <div className="list">
                     {menu.length === 0 && (
                       <div className="empty-state">
@@ -830,86 +882,63 @@ function App() {
                       </div>
                     )}
                     {menu.length > 0 &&
-                      Array.from(menuByCategory.entries()).map(
-                        ([category, items]) => (
-                          <div className="menu-category" key={category}>
-                            <div className="menu-category-header">
-                              <h3>{category}</h3>
+                      filteredMenu.map((item) => {
+                        const cartItem = cart.find(
+                          (entry) => entry.itemId === item.id,
+                        )
+                        const qty = cartItem?.qty ?? 0
+                        const maxQty = Math.max(0, item.stock ?? 0)
+                        return (
+                          <div className="list-item" key={item.id}>
+                            <div className="item-details">
+                              <div className="item-title">{item.name}</div>
+                              <div className="item-meta">
+                                {item.category || 'Other'} · {item.prepTime} min
+                              </div>
+                              <div className="item-meta">
+                                {currency.format(item.price)}
+                              </div>
+                              <div className="item-meta">
+                                Stock: {item.stock ?? 0} ·{' '}
+                                {item.available ? 'Available' : 'Unavailable'}
+                              </div>
+                              {(item.stock ?? 0) <= 5 && (
+                                <div className="item-meta warning">
+                                  Low stock
+                                </div>
+                              )}
                             </div>
-                            <div className="list">
-                              {items.map((item) => {
-                                const cartItem = cart.find(
-                                  (entry) => entry.itemId === item.id,
-                                )
-                                const qty = cartItem?.qty ?? 0
-                                const maxQty = Math.max(0, item.stock ?? 0)
-                                return (
-                                  <div className="list-item" key={item.id}>
-                                    <div className="item-details">
-                                      <div className="item-title">
-                                        {item.name}
-                                      </div>
-                                      <div className="item-meta">
-                                        {item.prepTime} min
-                                      </div>
-                                      <div className="item-meta">
-                                        {currency.format(item.price)}
-                                      </div>
-                                      <div className="item-meta">
-                                        Stock: {item.stock ?? 0} ·{' '}
-                                        {item.available
-                                          ? 'Available'
-                                          : 'Unavailable'}
-                                      </div>
-                                      {(item.stock ?? 0) <= 5 && (
-                                        <div className="item-meta warning">
-                                          Low stock
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="actions">
-                                      {qty === 0 ? (
-                                        <button
-                                          className="primary"
-                                          disabled={
-                                            !item.available || item.stock <= 0
-                                          }
-                                          onClick={() => handleAddToCart(item)}
-                                        >
-                                          Add
-                                        </button>
-                                      ) : (
-                                        <div className="menu-stepper">
-                                          <button
-                                            className="stepper-btn"
-                                            onClick={() =>
-                                              updateCart(item.id, -1)
-                                            }
-                                          >
-                                            -
-                                          </button>
-                                          <div className="menu-qty">{qty}</div>
-                                          <button
-                                            className="stepper-btn"
-                                            onClick={() =>
-                                              updateCart(item.id, 1)
-                                            }
-                                            disabled={
-                                              !item.available || qty >= maxQty
-                                            }
-                                          >
-                                            +
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )
-                              })}
+                            <div className="actions">
+                              {qty === 0 ? (
+                                <button
+                                  className="primary"
+                                  disabled={!item.available || item.stock <= 0}
+                                  onClick={() => handleAddToCart(item)}
+                                >
+                                  Add
+                                </button>
+                              ) : (
+                                <div className="menu-stepper">
+                                  <button
+                                    className="stepper-btn"
+                                    onClick={() => updateCart(item.id, -1)}
+                                  >
+                                    -
+                                  </button>
+                                  <div className="menu-qty">{qty}</div>
+                                  <button
+                                    className="stepper-btn"
+                                    onClick={() => updateCart(item.id, 1)}
+                                    disabled={!item.available || qty >= maxQty}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
-                        ),
-                      )}
+                        )
+                      })}
                   </div>
                 </section>
                 {showCartPanel && (
