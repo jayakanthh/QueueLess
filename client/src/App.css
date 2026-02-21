@@ -559,6 +559,53 @@
   font-size: 12px;
 }
 
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.stepper input[type='number'] {
+  width: 90px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  text-align: center;
+  font-weight: 600;
+  color: #0f172a;
+  background: #ffffff;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.stepper input[type='number']::-webkit-outer-spin-button,
+.stepper input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.stepper-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(238, 242, 255, 0.9);
+  color: #4f46e5;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stepper-btn:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+}
+
 .inline-field input[type='number'] {
   width: 90px;
   padding: 8px;

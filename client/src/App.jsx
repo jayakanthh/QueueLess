@@ -318,6 +318,16 @@ function App() {
     }))
   }
 
+  function adjustMenuFormStock(delta) {
+    setMenuForm((prev) => {
+      const current = Number(prev.stock || 0)
+      return {
+        ...prev,
+        stock: Math.max(0, current + delta),
+      }
+    })
+  }
+
   function handleEditMenu(item) {
     setMenuForm({
       id: item.id,
@@ -510,6 +520,19 @@ function App() {
         [field]: value,
       },
     }))
+  }
+
+  function adjustVendorDraftStock(itemId, delta) {
+    setVendorDrafts((prev) => {
+      const current = Number(prev[itemId]?.stock ?? 0)
+      return {
+        ...prev,
+        [itemId]: {
+          ...prev[itemId],
+          stock: Math.max(0, current + delta),
+        },
+      }
+    })
   }
 
   async function saveVendorStock(itemId) {
@@ -1025,14 +1048,30 @@ function App() {
                   </div>
                   <div className="form-row">
                     <label>Stock</label>
-                    <input
-                      name="stock"
-                      type="number"
-                      min="0"
-                      value={menuForm.stock}
-                      onChange={handleMenuFormChange}
-                      required
-                    />
+                    <div className="stepper">
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => adjustMenuFormStock(-1)}
+                      >
+                        -
+                      </button>
+                      <input
+                        name="stock"
+                        type="number"
+                        min="0"
+                        value={menuForm.stock}
+                        onChange={handleMenuFormChange}
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="stepper-btn"
+                        onClick={() => adjustMenuFormStock(1)}
+                      >
+                        +
+                      </button>
+                    </div>
                   </div>
                   <div className="form-row checkbox">
                     <input
@@ -1174,18 +1213,36 @@ function App() {
                           <div className="actions wrap">
                             <div className="inline-field">
                               <label>Stock</label>
-                              <input
-                                type="number"
-                                min="0"
-                                value={draft.stock}
-                                onChange={(event) =>
-                                  updateVendorDraft(
-                                    item.id,
-                                    'stock',
-                                    event.target.value,
-                                  )
-                                }
-                              />
+                              <div className="stepper">
+                                <button
+                                  type="button"
+                                  className="stepper-btn"
+                                  onClick={() =>
+                                    adjustVendorDraftStock(item.id, -1)
+                                  }
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={draft.stock}
+                                  onChange={(event) =>
+                                    updateVendorDraft(
+                                      item.id,
+                                      'stock',
+                                      event.target.value,
+                                    )
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="stepper-btn"
+                                  onClick={() => adjustVendorDraftStock(item.id, 1)}
+                                >
+                                  +
+                                </button>
+                              </div>
                             </div>
                             <div className="inline-field checkbox">
                               <input
