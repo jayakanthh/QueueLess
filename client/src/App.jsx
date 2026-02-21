@@ -1,7 +1,8 @@
+import { BrowserQRCodeReader } from '@zxing/browser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 function App() {
   const [authTab, setAuthTab] = useState('login')
@@ -20,7 +21,7 @@ function App() {
     stock: '',
     available: true,
   })
-  const [paymentMethod, setPaymentMethod] = useState('pay_on_pickup')
+  const [paymentMethod] = useState('razorpay_simulated')
   const [paymentIntent, setPaymentIntent] = useState(null)
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
@@ -34,6 +35,8 @@ function App() {
   const streamRef = useRef(null)
   const scanFrameRef = useRef(null)
   const scanActiveRef = useRef(false)
+  const zxingReaderRef = useRef(null)
+  const zxingControlsRef = useRef(null)
 
   const currency = useMemo(
     () =>
@@ -410,6 +413,11 @@ function App() {
       cancelAnimationFrame(scanFrameRef.current)
       scanFrameRef.current = null
     }
+    if (zxingControlsRef.current) {
+      zxingControlsRef.current.stop()
+      zxingControlsRef.current = null
+    }
+    zxingReaderRef.current = null
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop())
       streamRef.current = null
@@ -423,42 +431,72 @@ function App() {
   async function startScanner() {
     resetMessage()
     setScanError('')
-    if (!('BarcodeDetector' in window)) {
-      setScanError('Barcode scanning is not supported in this browser.')
-      return
-    }
+    stopScanner()
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-        audio: false,
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
-      const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
-      setScanActive(true)
-      scanActiveRef.current = true
-      const scanLoop = async () => {
-        if (!scanActiveRef.current || !videoRef.current) return
-        try {
-          const codes = await detector.detect(videoRef.current)
-          if (codes.length > 0) {
-            const value = codes[0].rawValue || ''
-            if (value) {
-              setScanToken(value)
-              stopScanner()
-              redeemOrderByToken(value)
-              return
+      if ('BarcodeDetector' in window) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        })
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+        const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
+        setScanActive(true)
+        scanActiveRef.current = true
+        const scanLoop = async () => {
+          if (!scanActiveRef.current || !videoRef.current) return
+          try {
+            const codes = await detector.detect(videoRef.current)
+            if (codes.length > 0) {
+              const value = codes[0].rawValue || ''
+              if (value) {
+                setScanToken(value)
+                stopScanner()
+                redeemOrderByToken(value)
+                return
+              }
             }
+          } catch (error) {
+            setScanError(error.message)
           }
-        } catch (error) {
-          setScanError(error.message)
+          scanFrameRef.current = requestAnimationFrame(scanLoop)
         }
         scanFrameRef.current = requestAnimationFrame(scanLoop)
+        return
       }
-      scanFrameRef.current = requestAnimationFrame(scanLoop)
+      if (!videoRef.current) {
+        setScanError('Camera is not ready yet.')
+        return
+      }
+      const reader = new BrowserQRCodeReader()
+      zxingReaderRef.current = reader
+      setScanActive(true)
+      scanActiveRef.current = true
+      const controls = await reader.decodeFromVideoDevice(
+        undefined,
+        videoRef.current,
+        (result, error, controlsRef) => {
+          if (result) {
+            const value = result.getText?.() || ''
+            if (value) {
+              setScanToken(value)
+              if (controlsRef) {
+                controlsRef.stop()
+              }
+              stopScanner()
+              redeemOrderByToken(value)
+            }
+            return
+          }
+          if (error && error.name !== 'NotFoundException') {
+            setScanError(error.message)
+          }
+        },
+      )
+      zxingControlsRef.current = controls
     } catch (error) {
       setScanError(error.message)
       stopScanner()
@@ -756,17 +794,7 @@ function App() {
                     </div>
                     <div className="form-row">
                       <label>Payment Method</label>
-                      <select
-                        value={paymentMethod}
-                        onChange={(event) =>
-                          setPaymentMethod(event.target.value)
-                        }
-                      >
-                        <option value="pay_on_pickup">Pay on pickup</option>
-                        <option value="razorpay_simulated">
-                          Razorpay (simulated)
-                        </option>
-                      </select>
+                      <div className="item-meta">Razorpay</div>
                     </div>
                     {requiresOnlinePayment && (
                       <div className="payment-box">
@@ -1222,10 +1250,10 @@ function App() {
                   <p>Move orders from preparing to ready for pickup.</p>
                 </div>
                 <div className="list">
-                  {orders.length === 0 && (
-                    <div className="empty-state">No orders yet.</div>
+                  {activeOrders.length === 0 && (
+                    <div className="empty-state">No active orders.</div>
                   )}
-                  {orders.map((order) => (
+                  {activeOrders.map((order) => (
                     <div className="list-item" key={order.id}>
                       <div className="item-details">
                         <div className="item-title">
@@ -1244,19 +1272,56 @@ function App() {
                           Payment: {order.paymentMethodLabel}
                         </div>
                       </div>
+                      <div className="actions status-actions">
+                        {['Pending', 'Preparing', 'Ready'].map((status) => (
+                          <button
+                            key={status}
+                            type="button"
+                            className={`status-button ${
+                              order.status === status ? 'active' : ''
+                            }`}
+                            onClick={() => updateOrderStatus(order.id, status)}
+                          >
+                            {status}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="section-header">
+                  <h3>Completed Orders</h3>
+                  <p>Orders verified via pickup QR.</p>
+                </div>
+                <div className="list">
+                  {pastOrders.length === 0 && (
+                    <div className="empty-state">
+                      No completed orders yet.
+                    </div>
+                  )}
+                  {pastOrders.map((order) => (
+                    <div className="list-item" key={order.id}>
+                      <div className="item-details">
+                        <div className="item-title">
+                          Order {order.orderNumber} · {order.customerName}
+                        </div>
+                        <div className="item-meta">
+                          {order.items
+                            .map((item) => `${item.name} × ${item.qty}`)
+                            .join(', ')}
+                        </div>
+                        <div className="item-meta">
+                          {new Date(order.createdAt).toLocaleString()}
+                        </div>
+                        <div className="item-meta">
+                          Payment: {order.paymentMethodLabel}
+                        </div>
+                      </div>
                       <div className="actions">
-                        <select
-                          value={order.status}
-                          onChange={(event) =>
-                            updateOrderStatus(order.id, event.target.value)
-                          }
-                        >
-                          {['Pending', 'Preparing', 'Ready'].map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </select>
+                        <span className="chip completed">Completed</span>
+                        <span className="chip">
+                          {currency.format(order.total)}
+                        </span>
                       </div>
                     </div>
                   ))}

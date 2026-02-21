@@ -197,6 +197,34 @@
   align-items: flex-end;
 }
 
+.status-actions {
+  gap: 12px;
+}
+
+.status-button {
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.status-button:hover {
+  border-color: #cbd5f5;
+  background: #eef2ff;
+}
+
+.status-button.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+  box-shadow: 0 6px 14px rgba(29, 78, 216, 0.2);
+}
+
 .chip {
   padding: 4px 10px;
   border-radius: 999px;
