@@ -438,13 +438,13 @@ function App() {
           audio: false,
         })
         streamRef.current = stream
+        setScanActive(true)
+        scanActiveRef.current = true
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           await videoRef.current.play()
         }
         const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
-        setScanActive(true)
-        scanActiveRef.current = true
         const scanLoop = async () => {
           if (!scanActiveRef.current || !videoRef.current) return
           try {
@@ -466,6 +466,8 @@ function App() {
         scanFrameRef.current = requestAnimationFrame(scanLoop)
         return
       }
+      setScanActive(true)
+      scanActiveRef.current = true
       if (!videoRef.current) {
         setScanError('Camera is not ready yet.')
         return
@@ -1343,9 +1345,8 @@ function App() {
                 <div className="scan-layout">
                   <div className="scan-panel">
                     <div className="scan-video">
-                      {scanActive ? (
-                        <video ref={videoRef} muted playsInline />
-                      ) : (
+                      <video ref={videoRef} muted playsInline />
+                      {!scanActive && (
                         <div className="empty-state">
                           Camera is off. Start scanning to verify pickup.
                         </div>
