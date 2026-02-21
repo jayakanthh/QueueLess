@@ -1,0 +1,74 @@
+{
+  "users": [
+    {
+      "id": "u-admin",
+      "name": "Canteen Admin",
+      "email": "admin@canteen.com",
+      "password": "admin123",
+      "role": "admin"
+    },
+    {
+      "id": "u-vendor",
+      "name": "Stock Vendor",
+      "email": "vendor@canteen.com",
+      "password": "vendor123",
+      "role": "vendor"
+    },
+    {
+      "id": "u-student",
+      "name": "Demo Student",
+      "email": "student@canteen.com",
+      "password": "student123",
+      "role": "student"
+    }
+  ],
+  "menu": [
+    {
+      "id": "m1",
+      "name": "Veg Sandwich",
+      "category": "Snacks",
+      "price": 40,
+      "prepTime": 8,
+      "stock": 25,
+      "available": true
+    },
+    {
+      "id": "m2",
+      "name": "Paneer Wrap",
+      "category": "Wraps",
+      "price": 75,
+      "prepTime": 12,
+      "stock": 18,
+      "available": true
+    },
+    {
+      "id": "m3",
+      "name": "Masala Dosa",
+      "category": "Meals",
+      "price": 60,
+      "prepTime": 10,
+      "stock": 20,
+      "available": true
+    },
+    {
+      "id": "m4",
+      "name": "Lemon Soda",
+      "category": "Beverages",
+      "price": 25,
+      "prepTime": 3,
+      "stock": 40,
+      "available": true
+    },
+    {
+      "id": "m5",
+      "name": "Fruit Bowl",
+      "category": "Healthy",
+      "price": 50,
+      "prepTime": 5,
+      "stock": 12,
+      "available": true
+    }
+  ],
+  "orders": [],
+  "sessions": []
+}
