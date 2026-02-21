@@ -30,11 +30,14 @@ function App() {
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [scanToken, setScanToken] = useState('')
+  const [scanStatus, setScanStatus] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
   const scannerRef = useRef(null)
   const scanDelayRef = useRef(null)
+  const scanCooldownRef = useRef(false)
+  const lastNoQrRef = useRef(0)
 
   const currency = useMemo(
     () =>
@@ -418,6 +421,8 @@ function App() {
   useEffect(() => {
     if (vendorPage !== 'scan' || !user || user.role !== 'vendor') {
       clearScanDelay()
+      scanCooldownRef.current = false
+      setScanStatus('')
       if (scannerRef.current) {
         scannerRef.current.clear().catch(() => {})
         scannerRef.current = null
@@ -436,27 +441,38 @@ function App() {
       ],
     }
 
+    setScanStatus('')
     const scanner = new Html5QrcodeScanner('qr-reader', config, false)
     scanner.render(
       (decodedText) => {
         if (!decodedText) return
+        if (scanCooldownRef.current) return
+        scanCooldownRef.current = true
         clearScanDelay()
-        if (scannerRef.current) {
-          scannerRef.current.clear().catch(() => {})
-          scannerRef.current = null
-        }
         setScanToken(decodedText)
-        setMessage('QR valid. Completing pickup...')
+        setScanStatus('QR valid. Completing pickup...')
         scanDelayRef.current = setTimeout(() => {
-          redeemOrderByToken(decodedText)
+          redeemOrderByToken(decodedText).finally(() => {
+            scanCooldownRef.current = false
+            setScanStatus('')
+          })
         }, 5000)
       },
-      () => {},
+      (error) => {
+        if (scanCooldownRef.current) return
+        const message = error?.toString?.() || ''
+        if (!message.toLowerCase().includes('notfound')) return
+        const now = Date.now()
+        if (now - lastNoQrRef.current < 2000) return
+        lastNoQrRef.current = now
+        setScanStatus('No QR detected')
+      },
     )
     scannerRef.current = scanner
 
     return () => {
       clearScanDelay()
+      scanCooldownRef.current = false
       scanner.clear().catch(() => {})
       scannerRef.current = null
     }
@@ -1292,6 +1308,7 @@ function App() {
                 <div className="scan-layout">
                   <div className="scan-panel">
                     <div id="qr-reader" className="scan-reader" />
+                    {scanStatus && <div className="scan-error">{scanStatus}</div>}
                     <div className="form-row">
                       <label>Pickup Token</label>
                       <input
