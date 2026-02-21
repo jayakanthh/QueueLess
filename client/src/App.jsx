@@ -35,6 +35,7 @@ function App() {
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
+  const [showCartPanel, setShowCartPanel] = useState(false)
   const scannerRef = useRef(null)
   const scanDelayRef = useRef(null)
   const scanCooldownRef = useRef(false)
@@ -54,6 +55,10 @@ function App() {
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
+    [cart],
+  )
+  const cartCount = useMemo(
+    () => cart.reduce((sum, item) => sum + item.qty, 0),
     [cart],
   )
   const requiresOnlinePayment = paymentMethod === 'razorpay_simulated'
@@ -146,10 +151,28 @@ function App() {
   }, [menu])
 
   useEffect(() => {
+    if (cart.length === 0) return
+    setCart((prev) =>
+      prev
+        .map((entry) => {
+          const item = menu.find((menuItem) => menuItem.id === entry.itemId)
+          const maxQty = Math.max(0, item?.stock ?? 0)
+          return { ...entry, qty: Math.min(entry.qty, maxQty) }
+        })
+        .filter((entry) => entry.qty > 0),
+    )
+  }, [menu, cart.length])
+
+  useEffect(() => {
     if (!user) return
     if (user.role === 'student') setStudentPage('menu')
     if (user.role === 'vendor') setVendorPage('orders')
+    setShowCartPanel(false)
   }, [user])
+
+  useEffect(() => {
+    if (studentPage !== 'menu') setShowCartPanel(false)
+  }, [studentPage])
 
   useEffect(() => {
     if (!requiresOnlinePayment || cart.length === 0) {
@@ -196,6 +219,7 @@ function App() {
         method: 'POST',
         body: JSON.stringify({
           name: formData.get('name'),
+          rollNumber: formData.get('rollNumber'),
           email: formData.get('email'),
           password: formData.get('password'),
         }),
@@ -224,6 +248,7 @@ function App() {
     setUser(null)
     setCart([])
     setShowWelcome(true)
+    setShowCartPanel(false)
   }
 
   function handleAddToCart(item) {
@@ -231,6 +256,7 @@ function App() {
     setCart((prev) => {
       const existing = prev.find((entry) => entry.itemId === item.id)
       if (existing) {
+        if (existing.qty >= item.stock) return prev
         return prev.map((entry) =>
           entry.itemId === item.id ? { ...entry, qty: entry.qty + 1 } : entry,
         )
@@ -248,11 +274,15 @@ function App() {
   }
 
   function updateCart(itemId, delta) {
+    const item = menu.find((menuItem) => menuItem.id === itemId)
+    const maxQty = Math.max(0, item?.stock ?? 0)
     setCart((prev) =>
       prev
-        .map((entry) =>
-          entry.itemId === itemId ? { ...entry, qty: entry.qty + delta } : entry,
-        )
+        .map((entry) => {
+          if (entry.itemId !== itemId) return entry
+          const nextQty = entry.qty + delta
+          return { ...entry, qty: Math.min(nextQty, maxQty) }
+        })
         .filter((entry) => entry.qty > 0),
     )
   }
@@ -556,15 +586,31 @@ function App() {
   const authNavIndex = authTab === 'login' ? 0 : 1
   const studentNavIndex = studentPage === 'menu' ? 0 : 1
   const vendorNavIndex = vendorPage === 'menu' ? 0 : vendorPage === 'orders' ? 1 : 2
+  const pageKey = user
+    ? `${user.role}-${
+        user.role === 'student'
+          ? studentPage
+          : user.role === 'vendor'
+            ? vendorPage
+            : 'admin'
+      }`
+    : showWelcome
+      ? 'welcome'
+      : `auth-${authTab}`
 
   if (!user) {
     return (
       <div className="app">
         <header className="topbar">
-          <div className="brand">
-            <span className="brand-name">QueueLess</span>
-            <span className="brand-subtitle">Digital Canteen Ordering</span>
-          </div>
+          <button
+            className="brand"
+            onClick={() => {
+              setShowWelcome(true)
+              setAuthTab('login')
+            }}
+          >
+            <img className="brand-logo" src="/qless.png" alt="QueueLess logo" />
+          </button>
           <div
             className="topbar-nav"
             style={{ '--nav-count': 2, '--active-index': authNavIndex }}
@@ -579,7 +625,7 @@ function App() {
               Login
             </button>
             <button
-              className={`tab-button ${authTab === 'register' ? 'active' : ''}`}
+              className={`tab-button danger ${authTab === 'register' ? 'active' : ''}`}
               onClick={() => {
                 setAuthTab('register')
                 setShowWelcome(false)
@@ -590,7 +636,7 @@ function App() {
           </div>
         </header>
 
-        <main className="content">
+        <main className="content page-transition" key={pageKey}>
           {showWelcome ? (
             <section className="card welcome">
               <div className="welcome-hero">
@@ -655,6 +701,10 @@ function App() {
                     <input type="text" name="name" required />
                   </div>
                   <div className="form-row">
+                    <label>Roll Number</label>
+                    <input type="text" name="rollNumber" required />
+                  </div>
+                  <div className="form-row">
                     <label>Email</label>
                     <input type="email" name="email" required />
                   </div>
@@ -681,8 +731,7 @@ function App() {
       <ToastContainer position="bottom-right" newestOnTop />
       <header className="topbar">
         <div className="brand">
-          <span className="brand-name">QueueLess</span>
-          <span className="brand-subtitle">Digital Canteen Ordering</span>
+          <img className="brand-logo" src="/qless.png" alt="QueueLess logo" />
         </div>
         {user.role === 'student' && (
           <div
@@ -738,20 +787,28 @@ function App() {
           <span>
             {user.name} ({user.role})
           </span>
-          <button className="ghost" onClick={handleLogout}>
+          {user.role === 'student' && (
+            <button
+              className="ghost cart-toggle"
+              onClick={() => setShowCartPanel((prev) => !prev)}
+            >
+              Cart ({cartCount})
+            </button>
+          )}
+          <button className="ghost danger" onClick={handleLogout}>
             Logout
           </button>
         </div>
       </header>
 
-      <main className="content">
+      <main className="content page-transition" key={pageKey}>
         {message && <div className="banner">{message}</div>}
 
         {user.role === 'student' && (
           <>
             {studentPage === 'menu' && (
-              <section className="grid">
-                <div className="card">
+              <>
+                <section className="card">
                   <div className="section-header">
                     <h2>Menu</h2>
                     <p>Pick your items and add them to cart.</p>
@@ -762,130 +819,187 @@ function App() {
                         No menu items available.
                       </div>
                     )}
-                    {menu.map((item) => (
-                      <div className="list-item" key={item.id}>
-                        <div className="item-details">
-                          <div className="item-title">{item.name}</div>
-                          <div className="item-meta">
-                            {item.category} · {item.prepTime} min
-                          </div>
-                          <div className="item-meta">
-                            {currency.format(item.price)}
-                          </div>
-                          <div className="item-meta">
-                            Stock: {item.stock ?? 0} ·{' '}
-                            {item.available ? 'Available' : 'Unavailable'}
-                          </div>
-                        </div>
-                        <div className="actions">
-                          <button
-                            className="primary"
-                            disabled={!item.available || item.stock <= 0}
-                            onClick={() => handleAddToCart(item)}
-                          >
-                            Add
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="card">
-                  <div className="section-header">
-                    <h2>Your Cart</h2>
-                    <p>Review items before placing the order.</p>
-                  </div>
-                  <div className="list">
-                    {cart.length === 0 && (
-                      <div className="empty-state">Cart is empty.</div>
-                    )}
-                    {cart.map((item) => (
-                      <div className="list-item" key={item.itemId}>
-                        <div className="item-details">
-                          <div className="item-title">{item.name}</div>
-                          <div className="item-meta">
-                            {currency.format(item.price)} · Qty {item.qty}
-                          </div>
-                        </div>
-                        <div className="actions">
-                          <button
-                            className="ghost"
-                            onClick={() => updateCart(item.itemId, -1)}
-                          >
-                            -
-                          </button>
-                          <button
-                            className="ghost"
-                            onClick={() => updateCart(item.itemId, 1)}
-                          >
-                            +
-                          </button>
-                          <button
-                            className="ghost"
-                            onClick={() => removeCartItem(item.itemId)}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="cart-summary">
-                    <div className="summary-row">
-                      <span>Total</span>
-                      <span>{currency.format(cartTotal)}</span>
-                    </div>
-                    <div className="form-row">
-                      <label>Payment Method</label>
-                      <div className="item-meta">Razorpay</div>
-                    </div>
-                    {requiresOnlinePayment && (
-                      <div className="payment-box">
-                        <div className="payment-row">
-                          <div>
-                            <div className="item-title">Razorpay Checkout</div>
+                    {menu.map((item) => {
+                      const cartItem = cart.find(
+                        (entry) => entry.itemId === item.id,
+                      )
+                      const qty = cartItem?.qty ?? 0
+                      const maxQty = Math.max(0, item.stock ?? 0)
+                      return (
+                        <div className="list-item" key={item.id}>
+                          <div className="item-details">
+                            <div className="item-title">{item.name}</div>
                             <div className="item-meta">
-                              Amount {currency.format(cartTotal)}
+                              {item.category} · {item.prepTime} min
                             </div>
-                            {paymentStatus && (
-                              <div className="item-meta">
-                                Status: {paymentStatus}
-                              </div>
+                            <div className="item-meta">
+                              {currency.format(item.price)}
+                            </div>
+                            <div className="item-meta">
+                              Stock: {item.stock ?? 0} ·{' '}
+                              {item.available ? 'Available' : 'Unavailable'}
+                            </div>
+                            {(item.stock ?? 0) <= 5 && (
+                              <div className="item-meta warning">Low stock</div>
                             )}
                           </div>
                           <div className="actions">
-                            <button
-                              className="ghost"
-                              onClick={createPaymentOrder}
-                              disabled={cart.length === 0}
-                            >
-                              Generate
-                            </button>
-                            <button
-                              className="primary"
-                              onClick={confirmPayment}
-                              disabled={!paymentIntent}
-                            >
-                              Pay Now
-                            </button>
+                            {qty === 0 ? (
+                              <button
+                                className="primary"
+                                disabled={!item.available || item.stock <= 0}
+                                onClick={() => handleAddToCart(item)}
+                              >
+                                Add
+                              </button>
+                            ) : (
+                              <div className="menu-stepper">
+                                <button
+                                  className="stepper-btn"
+                                  onClick={() => updateCart(item.id, -1)}
+                                >
+                                  -
+                                </button>
+                                <div className="menu-qty">{qty}</div>
+                                <button
+                                  className="stepper-btn"
+                                  onClick={() => updateCart(item.id, 1)}
+                                  disabled={!item.available || qty >= maxQty}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    )}
-                    <button
-                      className="primary"
-                      disabled={
-                        cart.length === 0 ||
-                        (requiresOnlinePayment && paymentStatus !== 'paid')
-                      }
-                      onClick={placeOrder}
-                    >
-                      Place Order
-                    </button>
+                      )
+                    })}
                   </div>
-                </div>
-              </section>
+                </section>
+                {showCartPanel && (
+                  <button
+                    className="cart-backdrop"
+                    onClick={() => setShowCartPanel(false)}
+                    aria-label="Close cart"
+                  />
+                )}
+                <aside className={`cart-drawer ${showCartPanel ? 'open' : ''}`}>
+                  <div className="card cart-card">
+                    <div className="cart-header">
+                      <div>
+                        <h2>Your Cart</h2>
+                        <p>Review items before placing the order.</p>
+                      </div>
+                      <button
+                        className="ghost"
+                        onClick={() => setShowCartPanel(false)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="list">
+                      {cart.length === 0 && (
+                        <div className="empty-state">Cart is empty.</div>
+                      )}
+                      {cart.map((item) => {
+                        const menuItem = menu.find(
+                          (menuEntry) => menuEntry.id === item.itemId,
+                        )
+                        const maxQty = Math.max(0, menuItem?.stock ?? 0)
+                        return (
+                          <div className="list-item" key={item.itemId}>
+                            <div className="item-details">
+                              <div className="item-title">{item.name}</div>
+                              <div className="item-meta">
+                                {currency.format(item.price)} · Qty {item.qty}
+                              </div>
+                              <div className="item-meta">
+                                Stock {menuItem?.stock ?? 0}
+                              </div>
+                            </div>
+                            <div className="actions">
+                              <button
+                                className="ghost"
+                                onClick={() => updateCart(item.itemId, -1)}
+                              >
+                                -
+                              </button>
+                              <button
+                                className="ghost"
+                                onClick={() => updateCart(item.itemId, 1)}
+                                disabled={item.qty >= maxQty}
+                              >
+                                +
+                              </button>
+                              <button
+                                className="ghost"
+                                onClick={() => removeCartItem(item.itemId)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="cart-summary">
+                      <div className="summary-row">
+                        <span>Total</span>
+                        <span>{currency.format(cartTotal)}</span>
+                      </div>
+                      <div className="form-row">
+                        <label>Payment Method</label>
+                        <div className="item-meta">Razorpay</div>
+                      </div>
+                      {requiresOnlinePayment && (
+                        <div className="payment-box">
+                          <div className="payment-row">
+                            <div>
+                              <div className="item-title">
+                                Razorpay Checkout
+                              </div>
+                              <div className="item-meta">
+                                Amount {currency.format(cartTotal)}
+                              </div>
+                              {paymentStatus && (
+                                <div className="item-meta">
+                                  Status: {paymentStatus}
+                                </div>
+                              )}
+                            </div>
+                            <div className="actions">
+                              <button
+                                className="ghost"
+                                onClick={createPaymentOrder}
+                                disabled={cart.length === 0}
+                              >
+                                Generate
+                              </button>
+                              <button
+                                className="primary"
+                                onClick={confirmPayment}
+                                disabled={!paymentIntent}
+                              >
+                                Pay Now
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        className="primary"
+                        disabled={
+                          cart.length === 0 ||
+                          (requiresOnlinePayment && paymentStatus !== 'paid')
+                        }
+                        onClick={placeOrder}
+                      >
+                        Place Order
+                      </button>
+                    </div>
+                  </div>
+                </aside>
+              </>
             )}
 
             {studentPage === 'orders' && (
@@ -1116,6 +1230,9 @@ function App() {
                         <div className="item-meta">
                           {item.available ? 'Available' : 'Unavailable'}
                         </div>
+                        {(item.stock ?? 0) <= 5 && (
+                          <div className="item-meta warning">Low stock</div>
+                        )}
                       </div>
                       <div className="actions">
                         <button
