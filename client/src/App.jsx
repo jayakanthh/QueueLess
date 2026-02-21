@@ -30,7 +30,6 @@ function App() {
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [scanToken, setScanToken] = useState('')
-  const [scanError, setScanError] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
@@ -426,7 +425,6 @@ function App() {
       return
     }
 
-    setScanError('')
     const config = {
       fps: 10,
       qrbox: { width: 240, height: 240 },
@@ -447,18 +445,13 @@ function App() {
           scannerRef.current.clear().catch(() => {})
           scannerRef.current = null
         }
-        setScanError('')
         setScanToken(decodedText)
         setMessage('QR valid. Completing pickup...')
         scanDelayRef.current = setTimeout(() => {
           redeemOrderByToken(decodedText)
         }, 5000)
       },
-      (error) => {
-        if (error) {
-          setScanError(error.toString())
-        }
-      },
+      () => {},
     )
     scannerRef.current = scanner
 
@@ -1299,7 +1292,6 @@ function App() {
                 <div className="scan-layout">
                   <div className="scan-panel">
                     <div id="qr-reader" className="scan-reader" />
-                    {scanError && <div className="scan-error">{scanError}</div>}
                     <div className="form-row">
                       <label>Pickup Token</label>
                       <input
