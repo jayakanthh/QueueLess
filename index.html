@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QueueLess Digital Canteen</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-name">QueueLess</span>
+          <span class="brand-subtitle">Digital Canteen Ordering</span>
+        </div>
+        <div class="user-area" id="user-area"></div>
+      </header>
+
+      <main class="content">
+        <section id="auth-section" class="card">
+          <div class="tabs">
+            <button class="tab active" data-tab="login">Login</button>
+            <button class="tab" data-tab="register">Register</button>
+          </div>
+          <div class="auth-body">
+            <form id="login-form" class="form">
+              <div class="form-row">
+                <label>Email</label>
+                <input type="email" name="email" required />
+              </div>
+              <div class="form-row">
+                <label>Password</label>
+                <input type="password" name="password" required />
+              </div>
+              <button type="submit" class="primary">Login</button>
+            </form>
+
+            <form id="register-form" class="form hidden">
+              <div class="form-row">
+                <label>Full Name</label>
+                <input type="text" name="name" required />
+              </div>
+              <div class="form-row">
+                <label>Email</label>
+                <input type="email" name="email" required />
+              </div>
+              <div class="form-row">
+                <label>Password</label>
+                <input type="password" name="password" required />
+              </div>
+              <button type="submit" class="primary">Create Account</button>
+            </form>
+            <div class="message" id="auth-message"></div>
+          </div>
+        </section>
+
+        <section id="student-section" class="hidden">
+          <div class="grid">
+            <div class="card">
+              <div class="section-header">
+                <h2>Menu</h2>
+                <p>Pick your items and add them to cart.</p>
+              </div>
+              <div id="menu-list" class="list"></div>
+            </div>
+
+            <div class="card">
+              <div class="section-header">
+                <h2>Your Cart</h2>
+                <p>Review items before placing the order.</p>
+              </div>
+              <div id="cart-list" class="list"></div>
+              <div class="cart-summary">
+                <div class="summary-row">
+                  <span>Total</span>
+                  <span id="cart-total">₹0</span>
+                </div>
+                <div class="form-row">
+                  <label>Payment Method</label>
+                  <select id="payment-method">
+                    <option value="pay_on_pickup">Pay on pickup</option>
+                    <option value="simulated">Simulated payment</option>
+                  </select>
+                </div>
+                <button id="place-order" class="primary">Place Order</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header">
+              <h2>Order Status</h2>
+              <p>Track your current and past orders.</p>
+            </div>
+            <div id="student-orders" class="list"></div>
+          </div>
+        </section>
+
+        <section id="admin-section" class="hidden">
+          <div class="grid">
+            <div class="card">
+              <div class="section-header">
+                <h2>Manage Menu</h2>
+                <p>Add, update, or remove menu items.</p>
+              </div>
+              <form id="menu-form" class="form compact">
+                <input type="hidden" name="id" />
+                <div class="form-row">
+                  <label>Item Name</label>
+                  <input type="text" name="name" required />
+                </div>
+                <div class="form-row">
+                  <label>Category</label>
+                  <input type="text" name="category" required />
+                </div>
+                <div class="form-row">
+                  <label>Price (₹)</label>
+                  <input type="number" name="price" min="1" required />
+                </div>
+                <div class="form-row">
+                  <label>Prep Time (min)</label>
+                  <input type="number" name="prepTime" min="1" required />
+                </div>
+                <button type="submit" class="primary" id="menu-submit">Add Item</button>
+                <button type="button" class="ghost" id="menu-cancel">Cancel</button>
+              </form>
+              <div id="admin-menu-list" class="list"></div>
+            </div>
+
+            <div class="card">
+              <div class="section-header">
+                <h2>Incoming Orders</h2>
+                <p>Update status as orders are prepared.</p>
+              </div>
+              <div id="admin-orders" class="list"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
