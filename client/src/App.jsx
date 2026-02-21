@@ -35,6 +35,7 @@ function App() {
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
   const scannerRef = useRef(null)
+  const scanDelayRef = useRef(null)
 
   const currency = useMemo(
     () =>
@@ -408,8 +409,16 @@ function App() {
     [apiFetch, loadOrders],
   )
 
+  const clearScanDelay = useCallback(() => {
+    if (scanDelayRef.current) {
+      clearTimeout(scanDelayRef.current)
+      scanDelayRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     if (vendorPage !== 'scan' || !user || user.role !== 'vendor') {
+      clearScanDelay()
       if (scannerRef.current) {
         scannerRef.current.clear().catch(() => {})
         scannerRef.current = null
@@ -433,8 +442,17 @@ function App() {
     scanner.render(
       (decodedText) => {
         if (!decodedText) return
+        clearScanDelay()
+        if (scannerRef.current) {
+          scannerRef.current.clear().catch(() => {})
+          scannerRef.current = null
+        }
+        setScanError('')
         setScanToken(decodedText)
-        redeemOrderByToken(decodedText)
+        setMessage('QR valid. Completing pickup...')
+        scanDelayRef.current = setTimeout(() => {
+          redeemOrderByToken(decodedText)
+        }, 5000)
       },
       (error) => {
         if (error) {
@@ -445,10 +463,11 @@ function App() {
     scannerRef.current = scanner
 
     return () => {
+      clearScanDelay()
       scanner.clear().catch(() => {})
       scannerRef.current = null
     }
-  }, [vendorPage, user, redeemOrderByToken])
+  }, [vendorPage, user, redeemOrderByToken, clearScanDelay])
 
   function updateVendorDraft(itemId, field, value) {
     setVendorDrafts((prev) => ({
