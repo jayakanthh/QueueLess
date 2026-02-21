@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
@@ -38,58 +38,61 @@ function App() {
     [cart],
   )
 
-  async function apiFetch(path, options = {}) {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    }
-    if (token) {
-      headers.Authorization = `Bearer ${token}`
-    }
-    const response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers,
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      throw new Error(data.message || 'Request failed')
-    }
-    return data
-  }
+  const apiFetch = useCallback(
+    async (path, options = {}) => {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+      const response = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.message || 'Request failed')
+      }
+      return data
+    },
+    [token],
+  )
 
-  async function loadMenu() {
+  const loadMenu = useCallback(async () => {
     const data = await apiFetch('/api/menu', { method: 'GET' })
     setMenu(data)
-  }
+  }, [apiFetch])
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     if (!token) return
     const data = await apiFetch('/api/orders', { method: 'GET' })
     setOrders(data)
-  }
+  }, [apiFetch, token])
 
-  async function loadMe(activeToken) {
-    if (!activeToken) return
+  const loadMe = useCallback(async () => {
+    if (!token) return
     try {
       const data = await apiFetch('/api/me', { method: 'GET' })
       setUser(data)
-    } catch (error) {
+    } catch {
       setToken('')
       localStorage.removeItem('ql_token')
       setUser(null)
     }
-  }
+  }, [apiFetch, token])
 
   useEffect(() => {
     if (!token) return
-    loadMe(token)
-  }, [token])
+    loadMe()
+  }, [token, loadMe])
 
   useEffect(() => {
     if (!user) return
     loadMenu().catch(() => {})
     loadOrders().catch(() => {})
-  }, [user])
+  }, [user, loadMenu, loadOrders])
 
   useEffect(() => {
     const drafts = {}
@@ -150,7 +153,8 @@ function App() {
   async function handleLogout() {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' })
-    } catch {
+    } catch (error) {
+      setMessage(error.message)
     }
     setToken('')
     localStorage.removeItem('ql_token')
