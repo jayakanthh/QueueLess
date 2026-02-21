@@ -74,6 +74,16 @@ function App() {
     () => orders.filter((order) => order.status === 'Ready'),
     [orders],
   )
+  const menuByCategory = useMemo(() => {
+    const grouped = new Map()
+    menu.forEach((item) => {
+      const category = item.category || 'Other'
+      const list = grouped.get(category) || []
+      list.push(item)
+      grouped.set(category, list)
+    })
+    return grouped
+  }, [menu])
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -819,61 +829,87 @@ function App() {
                         No menu items available.
                       </div>
                     )}
-                    {menu.map((item) => {
-                      const cartItem = cart.find(
-                        (entry) => entry.itemId === item.id,
-                      )
-                      const qty = cartItem?.qty ?? 0
-                      const maxQty = Math.max(0, item.stock ?? 0)
-                      return (
-                        <div className="list-item" key={item.id}>
-                          <div className="item-details">
-                            <div className="item-title">{item.name}</div>
-                            <div className="item-meta">
-                              {item.category} · {item.prepTime} min
+                    {menu.length > 0 &&
+                      Array.from(menuByCategory.entries()).map(
+                        ([category, items]) => (
+                          <div className="menu-category" key={category}>
+                            <div className="menu-category-header">
+                              <h3>{category}</h3>
                             </div>
-                            <div className="item-meta">
-                              {currency.format(item.price)}
+                            <div className="list">
+                              {items.map((item) => {
+                                const cartItem = cart.find(
+                                  (entry) => entry.itemId === item.id,
+                                )
+                                const qty = cartItem?.qty ?? 0
+                                const maxQty = Math.max(0, item.stock ?? 0)
+                                return (
+                                  <div className="list-item" key={item.id}>
+                                    <div className="item-details">
+                                      <div className="item-title">
+                                        {item.name}
+                                      </div>
+                                      <div className="item-meta">
+                                        {item.prepTime} min
+                                      </div>
+                                      <div className="item-meta">
+                                        {currency.format(item.price)}
+                                      </div>
+                                      <div className="item-meta">
+                                        Stock: {item.stock ?? 0} ·{' '}
+                                        {item.available
+                                          ? 'Available'
+                                          : 'Unavailable'}
+                                      </div>
+                                      {(item.stock ?? 0) <= 5 && (
+                                        <div className="item-meta warning">
+                                          Low stock
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="actions">
+                                      {qty === 0 ? (
+                                        <button
+                                          className="primary"
+                                          disabled={
+                                            !item.available || item.stock <= 0
+                                          }
+                                          onClick={() => handleAddToCart(item)}
+                                        >
+                                          Add
+                                        </button>
+                                      ) : (
+                                        <div className="menu-stepper">
+                                          <button
+                                            className="stepper-btn"
+                                            onClick={() =>
+                                              updateCart(item.id, -1)
+                                            }
+                                          >
+                                            -
+                                          </button>
+                                          <div className="menu-qty">{qty}</div>
+                                          <button
+                                            className="stepper-btn"
+                                            onClick={() =>
+                                              updateCart(item.id, 1)
+                                            }
+                                            disabled={
+                                              !item.available || qty >= maxQty
+                                            }
+                                          >
+                                            +
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )
+                              })}
                             </div>
-                            <div className="item-meta">
-                              Stock: {item.stock ?? 0} ·{' '}
-                              {item.available ? 'Available' : 'Unavailable'}
-                            </div>
-                            {(item.stock ?? 0) <= 5 && (
-                              <div className="item-meta warning">Low stock</div>
-                            )}
                           </div>
-                          <div className="actions">
-                            {qty === 0 ? (
-                              <button
-                                className="primary"
-                                disabled={!item.available || item.stock <= 0}
-                                onClick={() => handleAddToCart(item)}
-                              >
-                                Add
-                              </button>
-                            ) : (
-                              <div className="menu-stepper">
-                                <button
-                                  className="stepper-btn"
-                                  onClick={() => updateCart(item.id, -1)}
-                                >
-                                  -
-                                </button>
-                                <div className="menu-qty">{qty}</div>
-                                <button
-                                  className="stepper-btn"
-                                  onClick={() => updateCart(item.id, 1)}
-                                  disabled={!item.available || qty >= maxQty}
-                                >
-                                  +
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
+                        ),
+                      )}
                   </div>
                 </section>
                 {showCartPanel && (
