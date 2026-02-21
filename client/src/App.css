@@ -253,6 +253,49 @@
   font-size: 13px;
 }
 
+.welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hero {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  background: #eef2ff;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.hero h3 {
+  margin-bottom: 8px;
+}
+
+.hero-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 14px;
+}
+
+.hero-list li {
+  margin-bottom: 8px;
+}
+
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.portal-header {
+  padding: 20px 24px;
+}
+
 .hint {
   margin-top: 16px;
   border-radius: 12px;
