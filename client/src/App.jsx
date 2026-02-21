@@ -553,6 +553,10 @@ function App() {
     }
   }
 
+  const authNavIndex = authTab === 'login' ? 0 : 1
+  const studentNavIndex = studentPage === 'menu' ? 0 : 1
+  const vendorNavIndex = vendorPage === 'menu' ? 0 : vendorPage === 'orders' ? 1 : 2
+
   if (!user) {
     return (
       <div className="app">
@@ -561,7 +565,10 @@ function App() {
             <span className="brand-name">QueueLess</span>
             <span className="brand-subtitle">Digital Canteen Ordering</span>
           </div>
-          <div className="topbar-nav">
+          <div
+            className="topbar-nav"
+            style={{ '--nav-count': 2, '--active-index': authNavIndex }}
+          >
             <button
               className={`tab-button ${authTab === 'login' ? 'active' : ''}`}
               onClick={() => {
@@ -678,7 +685,10 @@ function App() {
           <span className="brand-subtitle">Digital Canteen Ordering</span>
         </div>
         {user.role === 'student' && (
-          <div className="topbar-nav">
+          <div
+            className="topbar-nav"
+            style={{ '--nav-count': 2, '--active-index': studentNavIndex }}
+          >
             <button
               className={`tab-button ${
                 studentPage === 'menu' ? 'active' : ''
@@ -698,7 +708,10 @@ function App() {
           </div>
         )}
         {user.role === 'vendor' && (
-          <div className="topbar-nav">
+          <div
+            className="topbar-nav"
+            style={{ '--nav-count': 3, '--active-index': vendorNavIndex }}
+          >
             <button
               className={`tab-button ${vendorPage === 'menu' ? 'active' : ''}`}
               onClick={() => setVendorPage('menu')}

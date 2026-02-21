@@ -21,10 +21,17 @@
   align-items: center;
   padding: 22px 32px;
   gap: 16px;
-  background: rgba(255, 255, 255, 0.85);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.75),
+    rgba(255, 255, 255, 0.45)
+  );
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow:
+    0 14px 30px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -56,8 +63,9 @@
   color: #475569;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(248, 250, 252, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .user-area span {
@@ -66,14 +74,33 @@
 }
 
 .topbar-nav {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-  padding: 6px 10px;
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(90px, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
   border-radius: 999px;
-  background: rgba(248, 250, 252, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.topbar-nav::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / var(--nav-count, 1));
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow:
+    0 8px 16px rgba(79, 70, 229, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transform: translateX(calc(var(--active-index, 0) * 100%));
+  transition: transform 0.35s ease, background 0.35s ease;
 }
 
 .content {
@@ -497,24 +524,24 @@
   padding: 8px 16px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(248, 250, 252, 0.85);
+  background: transparent;
   cursor: pointer;
   font-size: 13px;
   color: #334155;
   transition: all 0.25s ease;
+  position: relative;
+  z-index: 1;
 }
 
 .tab-button:hover {
   transform: translateY(-2px) scale(1.03);
   border-color: rgba(99, 102, 241, 0.45);
-  background: rgba(238, 242, 255, 0.95);
-  box-shadow: 0 10px 18px rgba(99, 102, 241, 0.18);
+  color: #1d4ed8;
 }
 
 .tab-button.active {
-  background: #4f46e5;
-  color: #ffffff;
-  border-color: #4f46e5;
+  color: #1e3a8a;
+  border-color: transparent;
 }
 
 .scan-layout {
