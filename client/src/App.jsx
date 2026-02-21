@@ -21,6 +21,8 @@ function App() {
     available: true,
   })
   const [paymentMethod, setPaymentMethod] = useState('pay_on_pickup')
+  const [paymentIntent, setPaymentIntent] = useState(null)
+  const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [showWelcome, setShowWelcome] = useState(!token)
 
@@ -38,6 +40,7 @@ function App() {
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
     [cart],
   )
+  const requiresOnlinePayment = paymentMethod === 'razorpay_simulated'
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -96,6 +99,15 @@ function App() {
   }, [user, loadMenu, loadOrders])
 
   useEffect(() => {
+    if (!user) return
+    if (user.role !== 'admin' && user.role !== 'vendor') return
+    const interval = setInterval(() => {
+      loadOrders().catch(() => {})
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [user, loadOrders])
+
+  useEffect(() => {
     const drafts = {}
     menu.forEach((item) => {
       drafts[item.id] = {
@@ -105,6 +117,17 @@ function App() {
     })
     setVendorDrafts(drafts)
   }, [menu])
+
+  useEffect(() => {
+    if (!requiresOnlinePayment || cart.length === 0) {
+      setPaymentIntent(null)
+      setPaymentStatus('')
+      return
+    }
+    if (paymentIntent && paymentIntent.amount === cartTotal) return
+    setPaymentIntent(null)
+    setPaymentStatus('')
+  }, [requiresOnlinePayment, cart, cartTotal, paymentIntent])
 
   function resetMessage() {
     setMessage('')
@@ -209,11 +232,42 @@ function App() {
         body: JSON.stringify({
           items: cart.map((item) => ({ itemId: item.itemId, qty: item.qty })),
           paymentMethod,
+          paymentId: paymentIntent?.paymentId || null,
         }),
       })
       setCart([])
+      setPaymentIntent(null)
+      setPaymentStatus('')
       setOrders((prev) => [order, ...prev])
       loadMenu().catch(() => {})
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function createPaymentOrder() {
+    resetMessage()
+    try {
+      const intent = await apiFetch('/api/payments/create-order', {
+        method: 'POST',
+        body: JSON.stringify({ amount: cartTotal }),
+      })
+      setPaymentIntent(intent)
+      setPaymentStatus(intent.status)
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function confirmPayment() {
+    if (!paymentIntent?.paymentId) return
+    resetMessage()
+    try {
+      const result = await apiFetch('/api/payments/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ paymentId: paymentIntent.paymentId }),
+      })
+      setPaymentStatus(result.status)
     } catch (error) {
       setMessage(error.message)
     }
@@ -574,12 +628,50 @@ function App() {
                       onChange={(event) => setPaymentMethod(event.target.value)}
                     >
                       <option value="pay_on_pickup">Pay on pickup</option>
-                      <option value="simulated">Simulated payment</option>
+                      <option value="razorpay_simulated">
+                        Razorpay (simulated)
+                      </option>
                     </select>
                   </div>
+                  {requiresOnlinePayment && (
+                    <div className="payment-box">
+                      <div className="payment-row">
+                        <div>
+                          <div className="item-title">Razorpay Checkout</div>
+                          <div className="item-meta">
+                            Amount {currency.format(cartTotal)}
+                          </div>
+                          {paymentStatus && (
+                            <div className="item-meta">
+                              Status: {paymentStatus}
+                            </div>
+                          )}
+                        </div>
+                        <div className="actions">
+                          <button
+                            className="ghost"
+                            onClick={createPaymentOrder}
+                            disabled={cart.length === 0}
+                          >
+                            Generate
+                          </button>
+                          <button
+                            className="primary"
+                            onClick={confirmPayment}
+                            disabled={!paymentIntent}
+                          >
+                            Pay Now
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <button
                     className="primary"
-                    disabled={cart.length === 0}
+                    disabled={
+                      cart.length === 0 ||
+                      (requiresOnlinePayment && paymentStatus !== 'paid')
+                    }
                     onClick={placeOrder}
                   >
                     Place Order
@@ -882,6 +974,54 @@ function App() {
                       </div>
                     )
                   })}
+                </div>
+              </div>
+              <div className="card">
+                <div className="section-header">
+                  <h2>Incoming Orders</h2>
+                  <p>Move orders from preparing to ready for pickup.</p>
+                </div>
+                <div className="list">
+                  {orders.length === 0 && (
+                    <div className="empty-state">No orders yet.</div>
+                  )}
+                  {orders.map((order) => (
+                    <div className="list-item" key={order.id}>
+                      <div className="item-details">
+                        <div className="item-title">
+                          Order {order.orderNumber} · {order.customerName}
+                        </div>
+                        <div className="item-meta">
+                          {order.items
+                            .map((item) => `${item.name} × ${item.qty}`)
+                            .join(', ')}
+                        </div>
+                        <div className="item-meta">
+                          ETA {order.etaMinutes} min ·{' '}
+                          {currency.format(order.total)}
+                        </div>
+                        <div className="item-meta">
+                          Payment: {order.paymentMethodLabel}
+                        </div>
+                      </div>
+                      <div className="actions">
+                        <select
+                          value={order.status}
+                          onChange={(event) =>
+                            updateOrderStatus(order.id, event.target.value)
+                          }
+                        >
+                          {['Pending', 'Preparing', 'Ready', 'Completed'].map(
+                            (status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </section>

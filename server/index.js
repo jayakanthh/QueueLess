@@ -1,13 +1,14 @@
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs/promises");
+const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const Database = require("better-sqlite3");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const dataDir = path.join(__dirname, "data");
-const dbPath = path.join(dataDir, "db.json");
+const dbPath = path.join(dataDir, "queueless.db");
 
 app.use(cors());
 app.use(express.json());
@@ -44,26 +45,95 @@ const defaultData = {
     { id: "m5", name: "Fruit Bowl", category: "Healthy", price: 50, prepTime: 5, stock: 12, available: true },
   ],
   orders: [],
+  payments: [],
   sessions: [],
 };
 
-async function ensureDb() {
-  await fs.mkdir(dataDir, { recursive: true });
-  try {
-    await fs.access(dbPath);
-  } catch {
-    await fs.writeFile(dbPath, JSON.stringify(defaultData, null, 2));
+let db;
+
+function initDb() {
+  fs.mkdirSync(dataDir, { recursive: true });
+  db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS menu (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      prepTime INTEGER NOT NULL,
+      stock INTEGER NOT NULL,
+      available INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      orderNumber TEXT NOT NULL,
+      userId TEXT NOT NULL,
+      customerName TEXT NOT NULL,
+      total INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      etaMinutes INTEGER NOT NULL,
+      paymentMethod TEXT NOT NULL,
+      paymentMethodLabel TEXT NOT NULL,
+      paymentId TEXT
+    );
+    CREATE TABLE IF NOT EXISTS order_items (
+      id TEXT PRIMARY KEY,
+      orderId TEXT NOT NULL,
+      itemId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      qty INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      currency TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      status TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      paidAt TEXT
+    );
+  `);
+  const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
+  if (userCount === 0) {
+    const insertUser = db.prepare(
+      "INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)"
+    );
+    const insertMenu = db.prepare(
+      "INSERT INTO menu (id, name, category, price, prepTime, stock, available) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    const seed = db.transaction(() => {
+      defaultData.users.forEach((user) => {
+        insertUser.run(user.id, user.name, user.email, user.password, user.role);
+      });
+      defaultData.menu.forEach((item) => {
+        insertMenu.run(
+          item.id,
+          item.name,
+          item.category,
+          item.price,
+          item.prepTime,
+          item.stock,
+          item.available ? 1 : 0
+        );
+      });
+    });
+    seed();
   }
-}
-
-async function readDb() {
-  await ensureDb();
-  const raw = await fs.readFile(dbPath, "utf-8");
-  return JSON.parse(raw);
-}
-
-async function writeDb(data) {
-  await fs.writeFile(dbPath, JSON.stringify(data, null, 2));
 }
 
 function createToken() {
@@ -81,14 +151,12 @@ function getAuthToken(req) {
 async function requireAuth(req, res, next) {
   const token = getAuthToken(req);
   if (!token) return res.status(401).json({ message: "Unauthorized" });
-  const db = await readDb();
-  const session = db.sessions.find((entry) => entry.token === token);
+  const session = db.prepare("SELECT token, userId FROM sessions WHERE token = ?").get(token);
   if (!session) return res.status(401).json({ message: "Unauthorized" });
-  const user = db.users.find((entry) => entry.id === session.userId);
+  const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(session.userId);
   if (!user) return res.status(401).json({ message: "Unauthorized" });
   req.user = user;
   req.token = token;
-  req.db = db;
   return next();
 }
 
@@ -101,6 +169,32 @@ function requireRole(...roles) {
   };
 }
 
+function mapMenuRow(row) {
+  return { ...row, available: Boolean(row.available) };
+}
+
+function fetchOrdersForUser(user) {
+  const orders =
+    user.role === "admin" || user.role === "vendor"
+      ? db.prepare("SELECT * FROM orders ORDER BY createdAt DESC").all()
+      : db.prepare("SELECT * FROM orders WHERE userId = ? ORDER BY createdAt DESC").all(user.id);
+  const itemsStmt = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?");
+  return orders.map((order) => ({
+    id: order.id,
+    orderNumber: order.orderNumber,
+    userId: order.userId,
+    customerName: order.customerName,
+    items: itemsStmt.all(order.id),
+    total: order.total,
+    status: order.status,
+    createdAt: order.createdAt,
+    etaMinutes: order.etaMinutes,
+    paymentMethod: order.paymentMethod,
+    paymentMethodLabel: order.paymentMethodLabel,
+    paymentId: order.paymentId,
+  }));
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -110,22 +204,25 @@ app.post("/api/auth/register", async (req, res) => {
   if (!name || !email || !password) {
     return res.status(400).json({ message: "Missing fields" });
   }
-  const db = await readDb();
-  if (db.users.some((user) => user.email === email)) {
+  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (existing) {
     return res.status(409).json({ message: "Email already registered" });
   }
-  const user = {
-    id: createToken(),
+  const token = createToken();
+  const userId = createToken();
+  db.prepare("INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)").run(
+    userId,
     name,
     email,
     password,
-    role: "student",
-  };
-  const token = createToken();
-  db.users.push(user);
-  db.sessions.push({ token, userId: user.id, createdAt: new Date().toISOString() });
-  await writeDb(db);
-  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+    "student"
+  );
+  db.prepare("INSERT INTO sessions (token, userId, createdAt) VALUES (?, ?, ?)").run(
+    token,
+    userId,
+    new Date().toISOString()
+  );
+  res.json({ token, user: { id: userId, name, email, role: "student" } });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -133,18 +230,21 @@ app.post("/api/auth/login", async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: "Missing fields" });
   }
-  const db = await readDb();
-  const user = db.users.find((entry) => entry.email === email && entry.password === password);
+  const user = db
+    .prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?")
+    .get(email, password);
   if (!user) return res.status(401).json({ message: "Invalid credentials" });
   const token = createToken();
-  db.sessions.push({ token, userId: user.id, createdAt: new Date().toISOString() });
-  await writeDb(db);
+  db.prepare("INSERT INTO sessions (token, userId, createdAt) VALUES (?, ?, ?)").run(
+    token,
+    user.id,
+    new Date().toISOString()
+  );
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 });
 
 app.post("/api/auth/logout", requireAuth, async (req, res) => {
-  req.db.sessions = req.db.sessions.filter((session) => session.token !== req.token);
-  await writeDb(req.db);
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(req.token);
   res.json({ status: "ok" });
 });
 
@@ -154,8 +254,8 @@ app.get("/api/me", requireAuth, (req, res) => {
 });
 
 app.get("/api/menu", async (_req, res) => {
-  const db = await readDb();
-  res.json(db.menu);
+  const menu = db.prepare("SELECT * FROM menu ORDER BY category, name").all().map(mapMenuRow);
+  res.json(menu);
 });
 
 app.post("/api/menu", requireAuth, requireRole("admin"), async (req, res) => {
@@ -172,118 +272,242 @@ app.post("/api/menu", requireAuth, requireRole("admin"), async (req, res) => {
     stock: Number.isFinite(Number(stock)) ? Number(stock) : 0,
     available: available !== false,
   };
-  req.db.menu.push(item);
-  await writeDb(req.db);
+  db.prepare(
+    "INSERT INTO menu (id, name, category, price, prepTime, stock, available) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(item.id, item.name, item.category, item.price, item.prepTime, item.stock, item.available ? 1 : 0);
   res.json(item);
 });
 
 app.put("/api/menu/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
   const { name, category, price, prepTime, stock, available } = req.body || {};
-  const menuItem = req.db.menu.find((item) => item.id === id);
+  const menuItem = db.prepare("SELECT * FROM menu WHERE id = ?").get(id);
   if (!menuItem) return res.status(404).json({ message: "Not found" });
-  menuItem.name = name ?? menuItem.name;
-  menuItem.category = category ?? menuItem.category;
-  menuItem.price = Number.isFinite(Number(price)) ? Number(price) : menuItem.price;
-  menuItem.prepTime = Number.isFinite(Number(prepTime)) ? Number(prepTime) : menuItem.prepTime;
-  if (Number.isFinite(Number(stock))) menuItem.stock = Number(stock);
-  if (typeof available === "boolean") menuItem.available = available;
-  await writeDb(req.db);
-  res.json(menuItem);
+  const updated = {
+    ...menuItem,
+    name: name ?? menuItem.name,
+    category: category ?? menuItem.category,
+    price: Number.isFinite(Number(price)) ? Number(price) : menuItem.price,
+    prepTime: Number.isFinite(Number(prepTime)) ? Number(prepTime) : menuItem.prepTime,
+    stock: Number.isFinite(Number(stock)) ? Number(stock) : menuItem.stock,
+    available: typeof available === "boolean" ? available : Boolean(menuItem.available),
+  };
+  db.prepare(
+    "UPDATE menu SET name = ?, category = ?, price = ?, prepTime = ?, stock = ?, available = ? WHERE id = ?"
+  ).run(
+    updated.name,
+    updated.category,
+    updated.price,
+    updated.prepTime,
+    updated.stock,
+    updated.available ? 1 : 0,
+    id
+  );
+  res.json(mapMenuRow(updated));
 });
 
 app.patch("/api/menu/:id/stock", requireAuth, requireRole("admin", "vendor"), async (req, res) => {
   const { id } = req.params;
   const { stock, available } = req.body || {};
-  const menuItem = req.db.menu.find((item) => item.id === id);
+  const menuItem = db.prepare("SELECT * FROM menu WHERE id = ?").get(id);
   if (!menuItem) return res.status(404).json({ message: "Not found" });
-  if (Number.isFinite(Number(stock))) menuItem.stock = Number(stock);
-  if (typeof available === "boolean") menuItem.available = available;
-  await writeDb(req.db);
-  res.json(menuItem);
+  const updatedStock = Number.isFinite(Number(stock)) ? Number(stock) : menuItem.stock;
+  const updatedAvailable = typeof available === "boolean" ? available : Boolean(menuItem.available);
+  db.prepare("UPDATE menu SET stock = ?, available = ? WHERE id = ?").run(
+    updatedStock,
+    updatedAvailable ? 1 : 0,
+    id
+  );
+  res.json(mapMenuRow({ ...menuItem, stock: updatedStock, available: updatedAvailable }));
 });
 
 app.delete("/api/menu/:id", requireAuth, requireRole("admin"), async (req, res) => {
   const { id } = req.params;
-  const existing = req.db.menu.find((item) => item.id === id);
+  const existing = db.prepare("SELECT id FROM menu WHERE id = ?").get(id);
   if (!existing) return res.status(404).json({ message: "Not found" });
-  req.db.menu = req.db.menu.filter((item) => item.id !== id);
-  await writeDb(req.db);
+  db.prepare("DELETE FROM menu WHERE id = ?").run(id);
   res.json({ status: "deleted" });
 });
 
-app.get("/api/orders", requireAuth, async (req, res) => {
-  if (req.user.role === "admin" || req.user.role === "vendor") {
-    return res.json(req.db.orders);
+app.post("/api/payments/create-order", requireAuth, requireRole("student"), async (req, res) => {
+  const { amount } = req.body || {};
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return res.status(400).json({ message: "Invalid amount" });
   }
-  const orders = req.db.orders.filter((order) => order.userId === req.user.id);
+  const payment = {
+    id: createToken(),
+    userId: req.user.id,
+    amount: numericAmount,
+    currency: "INR",
+    provider: "razorpay_simulated",
+    status: "created",
+    createdAt: new Date().toISOString(),
+  };
+  db.prepare(
+    "INSERT INTO payments (id, userId, amount, currency, provider, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    payment.id,
+    payment.userId,
+    payment.amount,
+    payment.currency,
+    payment.provider,
+    payment.status,
+    payment.createdAt
+  );
+  res.json({
+    paymentId: payment.id,
+    amount: payment.amount,
+    currency: payment.currency,
+    status: payment.status,
+  });
+});
+
+app.post("/api/payments/confirm", requireAuth, requireRole("student"), async (req, res) => {
+  const { paymentId } = req.body || {};
+  if (!paymentId) {
+    return res.status(400).json({ message: "Missing paymentId" });
+  }
+  const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+  if (!payment || payment.userId !== req.user.id) {
+    return res.status(404).json({ message: "Payment not found" });
+  }
+  const paidAt = new Date().toISOString();
+  db.prepare("UPDATE payments SET status = ?, paidAt = ? WHERE id = ?").run("paid", paidAt, paymentId);
+  res.json({
+    paymentId,
+    status: "paid",
+  });
+});
+
+app.get("/api/orders", requireAuth, async (req, res) => {
+  const orders = fetchOrdersForUser(req.user);
   return res.json(orders);
 });
 
 app.post("/api/orders", requireAuth, requireRole("student"), async (req, res) => {
-  const { items, paymentMethod } = req.body || {};
+  const { items, paymentMethod, paymentId } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: "Cart is empty" });
   }
-  const menuMap = new Map(req.db.menu.map((item) => [item.id, item]));
-  const orderItems = [];
-  let total = 0;
-  let etaMinutes = 0;
-  for (const entry of items) {
-    const menuItem = menuMap.get(entry.itemId);
-    const qty = Number(entry.qty);
-    if (!menuItem || !Number.isFinite(qty) || qty <= 0) {
-      return res.status(400).json({ message: "Invalid item in cart" });
-    }
-    if (!menuItem.available || menuItem.stock < qty) {
-      return res.status(400).json({ message: `Insufficient stock for ${menuItem.name}` });
-    }
-    menuItem.stock -= qty;
-    orderItems.push({
-      itemId: menuItem.id,
-      name: menuItem.name,
-      price: menuItem.price,
-      qty,
-    });
-    total += menuItem.price * qty;
-    etaMinutes += menuItem.prepTime * qty;
-  }
-  const orderNumber = String(req.db.orders.length + 1).padStart(4, "0");
-  const paymentMethodLabel = paymentMethod === "simulated" ? "Simulated payment" : "Pay on pickup";
-  const order = {
-    id: createToken(),
-    orderNumber,
-    userId: req.user.id,
-    customerName: req.user.name,
-    items: orderItems,
-    total,
-    status: "Pending",
-    createdAt: new Date().toISOString(),
-    etaMinutes: Math.max(5, Math.round(etaMinutes)),
-    paymentMethod: paymentMethod || "pay_on_pickup",
-    paymentMethodLabel,
+  const selectedPayment = paymentMethod || "pay_on_pickup";
+  const paymentLabels = {
+    pay_on_pickup: "Pay on pickup",
+    razorpay_simulated: "Razorpay (simulated)",
   };
-  req.db.orders.unshift(order);
-  await writeDb(req.db);
-  res.json(order);
+  if (!paymentLabels[selectedPayment]) {
+    return res.status(400).json({ message: "Invalid payment method" });
+  }
+  const placeOrder = db.transaction(() => {
+    const menuStmt = db.prepare("SELECT * FROM menu WHERE id = ?");
+    const updateStockStmt = db.prepare("UPDATE menu SET stock = ? WHERE id = ?");
+    const orderCount = db.prepare("SELECT COUNT(*) as count FROM orders").get().count;
+    const orderItems = [];
+    let total = 0;
+    let etaMinutes = 0;
+    for (const entry of items) {
+      const menuItem = menuStmt.get(entry.itemId);
+      const qty = Number(entry.qty);
+      if (!menuItem || !Number.isFinite(qty) || qty <= 0) {
+        throw new Error("Invalid item in cart");
+      }
+      if (!menuItem.available || menuItem.stock < qty) {
+        throw new Error(`Insufficient stock for ${menuItem.name}`);
+      }
+      const updatedStock = menuItem.stock - qty;
+      updateStockStmt.run(updatedStock, menuItem.id);
+      orderItems.push({
+        itemId: menuItem.id,
+        name: menuItem.name,
+        price: menuItem.price,
+        qty,
+      });
+      total += menuItem.price * qty;
+      etaMinutes += menuItem.prepTime * qty;
+    }
+    if (selectedPayment === "razorpay_simulated") {
+      if (!paymentId) {
+        throw new Error("Payment required");
+      }
+      const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+      if (!payment || payment.userId !== req.user.id) {
+        throw new Error("Payment not found");
+      }
+      if (payment.status !== "paid") {
+        throw new Error("Payment not confirmed");
+      }
+      if (payment.amount !== total) {
+        throw new Error("Payment amount mismatch");
+      }
+    }
+    const orderId = createToken();
+    const orderNumber = String(orderCount + 1).padStart(4, "0");
+    const createdAt = new Date().toISOString();
+    const etaMinutesRounded = Math.max(5, Math.round(etaMinutes));
+    const insertOrder = db.prepare(
+      "INSERT INTO orders (id, orderNumber, userId, customerName, total, status, createdAt, etaMinutes, paymentMethod, paymentMethodLabel, paymentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    insertOrder.run(
+      orderId,
+      orderNumber,
+      req.user.id,
+      req.user.name,
+      total,
+      "Pending",
+      createdAt,
+      etaMinutesRounded,
+      selectedPayment,
+      paymentLabels[selectedPayment],
+      paymentId || null
+    );
+    const insertItem = db.prepare(
+      "INSERT INTO order_items (id, orderId, itemId, name, price, qty) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    orderItems.forEach((item) => {
+      insertItem.run(createToken(), orderId, item.itemId, item.name, item.price, item.qty);
+    });
+    return {
+      id: orderId,
+      orderNumber,
+      userId: req.user.id,
+      customerName: req.user.name,
+      items: orderItems,
+      total,
+      status: "Pending",
+      createdAt,
+      etaMinutes: etaMinutesRounded,
+      paymentMethod: selectedPayment,
+      paymentMethodLabel: paymentLabels[selectedPayment],
+      paymentId: paymentId || null,
+    };
+  });
+  try {
+    const order = placeOrder();
+    res.json(order);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
 });
 
-app.patch("/api/orders/:id/status", requireAuth, requireRole("admin"), async (req, res) => {
+app.patch("/api/orders/:id/status", requireAuth, requireRole("admin", "vendor"), async (req, res) => {
   const { id } = req.params;
   const { status } = req.body || {};
   const allowed = ["Pending", "Preparing", "Ready", "Completed"];
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: "Invalid status" });
   }
-  const order = req.db.orders.find((entry) => entry.id === id);
+  const order = db.prepare("SELECT id FROM orders WHERE id = ?").get(id);
   if (!order) return res.status(404).json({ message: "Not found" });
-  order.status = status;
-  await writeDb(req.db);
-  res.json(order);
+  db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, id);
+  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  const items = db.prepare("SELECT itemId, name, price, qty FROM order_items WHERE orderId = ?").all(id);
+  res.json({
+    ...updated,
+    items,
+  });
 });
 
-ensureDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on ${PORT}`);
-  });
+initDb();
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
 });

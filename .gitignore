@@ -4,5 +4,6 @@ server/node_modules
 client/dist
 client/dist-ssr
 server/data/*.log
+server/data/*.db
 *.local
 .DS_Store

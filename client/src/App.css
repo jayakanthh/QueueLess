@@ -238,6 +238,21 @@
   font-weight: 600;
 }
 
+.payment-box {
+  border-radius: 12px;
+  border: 1px dashed #cbd5f5;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.payment-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .message {
   margin-top: 12px;
   font-size: 13px;
