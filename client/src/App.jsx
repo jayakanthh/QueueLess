@@ -1,4 +1,3 @@
-import { BrowserQRCodeReader } from '@zxing/browser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
@@ -469,6 +468,12 @@ function App() {
       }
       if (!videoRef.current) {
         setScanError('Camera is not ready yet.')
+        return
+      }
+      const module = await import('@zxing/browser')
+      const { BrowserQRCodeReader } = module
+      if (!BrowserQRCodeReader) {
+        setScanError('QR scanner failed to load.')
         return
       }
       const reader = new BrowserQRCodeReader()
