@@ -4,6 +4,8 @@ import {
   Html5QrcodeScanType,
 } from 'html5-qrcode'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ToastContainer, toast } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -30,7 +32,6 @@ function App() {
   const [paymentStatus, setPaymentStatus] = useState('')
   const [vendorDrafts, setVendorDrafts] = useState({})
   const [scanToken, setScanToken] = useState('')
-  const [scanStatus, setScanStatus] = useState('')
   const [studentPage, setStudentPage] = useState('menu')
   const [vendorPage, setVendorPage] = useState('orders')
   const [showWelcome, setShowWelcome] = useState(!token)
@@ -38,6 +39,8 @@ function App() {
   const scanDelayRef = useRef(null)
   const scanCooldownRef = useRef(false)
   const lastNoQrRef = useRef(0)
+  const lastOrderStatusRef = useRef(new Map())
+  const hasLoadedOrdersRef = useRef(false)
 
   const currency = useMemo(
     () =>
@@ -125,7 +128,6 @@ function App() {
 
   useEffect(() => {
     if (!user) return
-    if (user.role !== 'admin' && user.role !== 'vendor') return
     const interval = setInterval(() => {
       loadOrders().catch(() => {})
     }, 10000)
@@ -422,7 +424,6 @@ function App() {
     if (vendorPage !== 'scan' || !user || user.role !== 'vendor') {
       clearScanDelay()
       scanCooldownRef.current = false
-      setScanStatus('')
       if (scannerRef.current) {
         scannerRef.current.clear().catch(() => {})
         scannerRef.current = null
@@ -441,7 +442,6 @@ function App() {
       ],
     }
 
-    setScanStatus('')
     const scanner = new Html5QrcodeScanner('qr-reader', config, false)
     scanner.render(
       (decodedText) => {
@@ -450,11 +450,12 @@ function App() {
         scanCooldownRef.current = true
         clearScanDelay()
         setScanToken(decodedText)
-        setScanStatus('QR valid. Completing pickup...')
+        toast.success('QR valid. Completing pickup...', {
+          autoClose: 5000,
+        })
         scanDelayRef.current = setTimeout(() => {
           redeemOrderByToken(decodedText).finally(() => {
             scanCooldownRef.current = false
-            setScanStatus('')
           })
         }, 5000)
       },
@@ -465,7 +466,7 @@ function App() {
         const now = Date.now()
         if (now - lastNoQrRef.current < 2000) return
         lastNoQrRef.current = now
-        setScanStatus('No QR detected')
+        toast.info('No QR detected', { autoClose: 1500 })
       },
     )
     scannerRef.current = scanner
@@ -477,6 +478,29 @@ function App() {
       scannerRef.current = null
     }
   }, [vendorPage, user, redeemOrderByToken, clearScanDelay])
+
+  useEffect(() => {
+    if (!user || user.role !== 'student') return
+    if (!hasLoadedOrdersRef.current) {
+      hasLoadedOrdersRef.current = true
+      const initialMap = new Map()
+      orders.forEach((order) => {
+        initialMap.set(order.id, order.status)
+      })
+      lastOrderStatusRef.current = initialMap
+      return
+    }
+
+    orders.forEach((order) => {
+      const previous = lastOrderStatusRef.current.get(order.id)
+      if (previous !== 'Ready' && order.status === 'Ready') {
+        toast.success(`Order ${order.orderNumber} is ready for pickup`, {
+          autoClose: 4000,
+        })
+      }
+      lastOrderStatusRef.current.set(order.id, order.status)
+    })
+  }, [orders, user])
 
   function updateVendorDraft(itemId, field, value) {
     setVendorDrafts((prev) => ({
@@ -631,6 +655,7 @@ function App() {
 
   return (
     <div className="app">
+      <ToastContainer position="bottom-right" newestOnTop />
       <header className="topbar">
         <div className="brand">
           <span className="brand-name">QueueLess</span>
@@ -1308,7 +1333,6 @@ function App() {
                 <div className="scan-layout">
                   <div className="scan-panel">
                     <div id="qr-reader" className="scan-reader" />
-                    {scanStatus && <div className="scan-error">{scanStatus}</div>}
                     <div className="form-row">
                       <label>Pickup Token</label>
                       <input
